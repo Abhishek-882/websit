@@ -11,9 +11,10 @@ export default function ToastContainer({ activeToast, onDismiss, onView }) {
   if (!activeToast) return null;
 
   const { token, title, message } = activeToast;
+  const cleanTitle = (title || `New Match: $${token?.symbol || 'TOKEN'}`).replace(/^🔥\s*/, '');
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 max-w-sm w-full animate-bounce-in">
+    <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-5 sm:max-w-sm z-50 animate-bounce-in">
       <div className="bg-[#0f172a] border-2 border-cyan-500/80 rounded-xl p-4 shadow-2xl shadow-cyan-950/60 backdrop-blur-md">
         
         {/* Top: Header with close */}
@@ -21,7 +22,7 @@ export default function ToastContainer({ activeToast, onDismiss, onView }) {
           <div className="flex items-center gap-2">
             <span className="text-base">🔥</span>
             <h4 className="text-xs font-bold text-white tracking-wide">
-              {title || `New Filter Match: $${token?.symbol || 'TOKEN'}`}
+              {cleanTitle}
             </h4>
           </div>
           <button

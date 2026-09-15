@@ -129,7 +129,7 @@ export class DevFundService {
     const solBalance = devAddress ? await this.getDevSolBalance(devAddress) : null;
 
     const creatorStatus = String(gmgnDevInfo?.creator_token_status || '').toLowerCase();
-    const isDumped = creatorStatus.includes('close') || creatorStatus === 'creator_close';
+    const isDumped = creatorStatus.includes('close') || creatorStatus.includes('dump') || creatorStatus.includes('sold') || creatorStatus === 'creator_close';
     const isCto = Boolean(gmgnDevInfo?.cto_flag);
 
     let statusLabel = 'Holding';

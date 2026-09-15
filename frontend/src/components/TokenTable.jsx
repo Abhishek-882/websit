@@ -164,6 +164,33 @@ export default function TokenTable({
                             )}
                           </button>
                         </div>
+
+                        {/* Direct GMGN & DexScreener Links Below Token */}
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <a
+                            href={`https://gmgn.ai/sol/token/${token.address}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-700/60 text-cyan-300 font-bold text-[10px] transition-all hover:scale-105 shadow-sm"
+                            title="Open in GMGN.ai"
+                          >
+                            <span>GMGN</span>
+                            <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                          </a>
+                          {token.url && (
+                            <a
+                              href={token.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-0.5 text-slate-400 hover:text-slate-200 text-[10px] transition-colors"
+                              title="Open in DexScreener"
+                            >
+                              <span>DexScreener ↗</span>
+                            </a>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -194,15 +221,25 @@ export default function TokenTable({
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/70 border border-emerald-800/80 text-emerald-300 font-bold text-xs font-mono">
                           <span>💎</span>
                           <span>{smartCount} holding</span>
+                          {token.smartMoneySoldCount > 0 && (
+                            <span className="text-slate-400 font-normal text-[10px]">· {token.smartMoneySoldCount} sold</span>
+                          )}
                         </span>
                         {token.smartHolders && token.smartHolders.length > 0 && (
                           <div className="text-[10px] text-emerald-400 font-mono mt-0.5">
-                            Top: ${formatCurrency(token.smartHolders[0].usdValue)}
+                            Top: {formatCurrency(token.smartHolders[0].usdValue)}
                           </div>
                         )}
                       </div>
                     ) : (
-                      <span className="text-slate-400 font-mono text-xs">0 holding</span>
+                      <div className="font-mono text-xs">
+                        <span className="text-slate-400">0 holding</span>
+                        {token.smartMoneySoldCount > 0 && (
+                          <span className="text-rose-400/80 text-[11px] ml-1 font-semibold">
+                            ({token.smartMoneySoldCount} sold)
+                          </span>
+                        )}
+                      </div>
                     )}
                   </td>
 
@@ -215,15 +252,25 @@ export default function TokenTable({
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-950/70 border border-purple-800/80 text-purple-300 font-bold text-xs font-mono">
                           <span>📣</span>
                           <span>{kolCount} holding</span>
+                          {token.kolSoldCount > 0 && (
+                            <span className="text-slate-400 font-normal text-[10px]">· {token.kolSoldCount} sold</span>
+                          )}
                         </span>
-                        {token.kolHolders && token.kolHolders[0]?.name && (
-                          <div className="text-[10px] text-purple-400 font-mono mt-0.5 truncate max-w-[90px]">
-                            @{token.kolHolders[0].name}
+                        {token.kolHolders && token.kolHolders[0] && (
+                          <div className="text-[10px] text-purple-400 font-mono mt-0.5 truncate max-w-[120px]">
+                            @{token.kolHolders[0].twitterUsername || token.kolHolders[0].name || 'KOL'} ({formatCurrency(token.kolHolders[0].usdValue)})
                           </div>
                         )}
                       </div>
                     ) : (
-                      <span className="text-slate-400 font-mono text-xs">0 holding</span>
+                      <div className="font-mono text-xs">
+                        <span className="text-slate-400">0 holding</span>
+                        {token.kolSoldCount > 0 && (
+                          <span className="text-rose-400/80 text-[11px] ml-1 font-semibold">
+                            ({token.kolSoldCount} sold)
+                          </span>
+                        )}
+                      </div>
                     )}
                   </td>
 

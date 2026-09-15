@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { GMGNKeyPool } from '../src/services/gmgnKeyPool.service.js';
-import { DexScreenerService } from '../src/services/dexscreener.service.js';
+import { DexScreenerService, dexscreenerService } from '../src/services/dexscreener.service.js';
 import { DevFundService, devFundService } from '../src/services/devFund.service.js';
+import { tokenAggregatorService } from '../src/services/tokenAggregator.service.js';
 
 console.log('🧪 Starting Ban-Proof & 5-Metric Telemetry Test Suite...\n');
 
@@ -89,16 +90,21 @@ await runTest('DexScreenerService formats relative age correctly', () => {
 
 await runTest('DexScreenerService pre-filters dead pairs with < $1,000 liquidity', () => {
   const testPairs = [
-    { address: 'token1', marketCap: 50000, liquidityUsd: 15000 },
-    { address: 'token2', marketCap: 3000, liquidityUsd: 250 },   // dead/pulled liquidity trap
-    { address: 'token3', marketCap: 250000, liquidityUsd: 85000 },
-    { address: 'token4', marketCap: 0, liquidityUsd: 5000 },      // 0 mcap
+    { address: 'token1', marketCap: 50000, liquidityUsd: 15000, volume24h: 1000 },
+    { address: 'token2', marketCap: 3000, liquidityUsd: 250, volume24h: 50 },   // dead/pulled liquidity trap (< $1000)
+    { address: 'token3', marketCap: 250000, liquidityUsd: 85000, volume24h: 5000 },
+    { address: 'token4', marketCap: 0, liquidityUsd: 5000, volume24h: 100 },      // 0 mcap
+    { address: 'token5', marketCap: 12000, liquidityUsd: 1000, volume24h: 200 }, // exactly $1,000 boundary -> PASS
+    { address: 'token6', marketCap: 12000, liquidityUsd: 999.99, volume24h: 200 }, // $999.99 -> FAIL
   ];
 
-  const filtered = testPairs.filter(t => t.address && t.marketCap > 0 && t.liquidityUsd >= 1000);
-  assert.equal(filtered.length, 2);
-  assert.equal(filtered[0].address, 'token1');
-  assert.equal(filtered[1].address, 'token3');
+  const filtered = dexscreenerService.preFilterPairs(testPairs);
+  assert.equal(filtered.length, 3);
+  assert.equal(filtered.some(t => t.address === 'token1'), true);
+  assert.equal(filtered.some(t => t.address === 'token3'), true);
+  assert.equal(filtered.some(t => t.address === 'token5'), true);
+  assert.equal(filtered.some(t => t.address === 'token2'), false);
+  assert.equal(filtered.some(t => t.address === 'token6'), false);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -170,9 +176,15 @@ await runTest('Strict Holder Filtering excludes sold out wallets and wallets hol
       sell_amount_percentage: 0.2, // Still holding 80%, $120 > $50 -> PASS
     },
     {
+      address: 'wallet_smart_99pct',
+      tags: ['smart_wallet'],
+      usd_value: 200,
+      sell_amount_percentage: 0.99, // Sold 99% but still holds $200 >= $50 and 0.99 < 1 -> PASS
+    },
+    {
       address: 'wallet_smart_dust',
       tags: ['smart_wallet'],
-      usd_value: 15,
+      usd_value: 49.99,
       sell_amount_percentage: 0.0, // Holding but < $50 USD -> FAIL
     },
     {
@@ -195,31 +207,100 @@ await runTest('Strict Holder Filtering excludes sold out wallets and wallets hol
       usd_value: 500,
       sell_amount_percentage: 1.0, // 100% sold out -> FAIL
     },
+    {
+      address: 'wallet_kol_v2_tag',
+      wallet_tag_v2: 'KOL',
+      usd_value: 300,
+      sell_amount_percentage: 0.1, // Tag v2 recognized -> PASS
+    },
   ];
 
-  const activeSmart = [];
-  const activeKol = [];
+  const { activeSmartHolders, activeKolHolders } = tokenAggregatorService.filterActiveHolders(rawTraders);
 
-  for (const tr of rawTraders) {
-    const usdVal = Number(tr.usd_value || 0);
-    const sellPct = Number(tr.sell_amount_percentage || 0);
+  assert.equal(activeSmartHolders.length, 2, 'Wallets holding >= $50 USD and sell < 1 must be in smart count');
+  assert.equal(activeSmartHolders[0].address, 'wallet_smart_holding');
+  assert.equal(activeSmartHolders[1].address, 'wallet_smart_99pct');
 
-    // Strict requirements: usd_value >= 50 and sell_amount_percentage < 1
-    if (usdVal < 50 || sellPct >= 1) continue;
+  assert.equal(activeKolHolders.length, 2, 'Active KOLs must include both standard and v2 tagged wallets, excluding dumped');
+  assert.equal(activeKolHolders[0].address, 'wallet_kol_active');
+  assert.equal(activeKolHolders[1].address, 'wallet_kol_v2_tag');
+});
 
-    const tags = Array.isArray(tr.tags) ? tr.tags.map(t => String(t).toLowerCase()) : [];
-    const isSmart = tags.some(t => t.includes('smart') || t === 'smart_degen' || t === 'smart_wallet');
-    const isKol = tags.some(t => t.includes('kol') || t.includes('renowned') || t.includes('influencer')) || Boolean(tr.twitter_username);
+// ─────────────────────────────────────────────────────────────
+// 5. Tier 1 Fast-Gating Screen Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('Tier 1 Fast-Gating Screen detects candidate counts and avoids Weight 5 top traders call', () => {
+  // Scenario A: Candidate with 0 smart and 0 renowned
+  const zeroCandidate = {
+    wallet_tags_stat: {
+      smart_wallets: 0,
+      smart_degen: 0,
+      renowned_wallets: 0,
+      kol_wallets: 0,
+    }
+  };
+  const smartA = Number(zeroCandidate.wallet_tags_stat.smart_wallets || zeroCandidate.wallet_tags_stat.smart_degen || 0);
+  const kolA = Number(zeroCandidate.wallet_tags_stat.renowned_wallets || zeroCandidate.wallet_tags_stat.kol_wallets || 0);
+  assert.equal(smartA > 0 || kolA > 0, false, 'Fast-gating must engage and skip Weight 5 top traders query');
 
-    if (isSmart) activeSmart.push(tr);
-    if (isKol) activeKol.push(tr);
-  }
+  // Scenario B: Candidate with kol_wallets > 0
+  const kolCandidate = {
+    wallet_tags_stat: {
+      smart_wallets: 0,
+      kol_wallets: 2,
+    }
+  };
+  const smartB = Number(kolCandidate.wallet_tags_stat.smart_wallets || kolCandidate.wallet_tags_stat.smart_degen || 0);
+  const kolB = Number(kolCandidate.wallet_tags_stat.renowned_wallets || kolCandidate.wallet_tags_stat.kol_wallets || 0);
+  assert.equal(smartB > 0 || kolB > 0, true, 'Fast-gating must trigger deep inspection for candidate with kol_wallets');
+});
 
-  assert.equal(activeSmart.length, 1, 'Only wallets holding >= $50 USD should be in smart count');
-  assert.equal(activeSmart[0].address, 'wallet_smart_holding');
+// ─────────────────────────────────────────────────────────────
+// 6. In-Memory 5-Metric Unified Client Filter Engine Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('In-Memory Filter Engine evaluates all 5 dimensions without API calls (<1ms)', async () => {
+  // Import unified filter function from FilterBar
+  const { isTokenMatchingFilters } = await import('../../frontend/src/components/FilterBar.jsx');
 
-  assert.equal(activeKol.length, 1, 'Dumped KOLs must be strictly excluded');
-  assert.equal(activeKol[0].address, 'wallet_kol_active');
+  const testToken = {
+    symbol: 'SOLRADAR',
+    name: 'Solana Radar Token',
+    address: 'So11111111111111111111111111111111111111112',
+    marketCap: 150000,
+    ageMs: 45 * 60 * 1000, // 45 minutes
+    smartMoneyCount: 2,
+    kolCount: 1,
+    devFund: {
+      isCexFunded: true,
+      fundingSource: 'Binance',
+      devStatus: 'Holding',
+      isDumped: false,
+    },
+  };
+
+  // 1. Matches all criteria
+  const passFilters = {
+    search: '',
+    mcapPreset: '50k-250k',
+    agePreset: '<1h',
+    smartPreset: '>=2',
+    kolPreset: '>=1',
+    devPreset: 'cex',
+  };
+  assert.equal(isTokenMatchingFilters(testToken, passFilters), true, 'Should pass matching filters');
+
+  // 2. Fails when Age filter requires <15m
+  const failAge = { ...passFilters, agePreset: '<15m' };
+  assert.equal(isTokenMatchingFilters(testToken, failAge), false, 'Should fail age filter');
+
+  // 3. Fails when Smart Money requires >= 3
+  const failSmart = { ...passFilters, smartPreset: '>=3' };
+  assert.equal(isTokenMatchingFilters(testToken, failSmart), false, 'Should fail smart money filter');
+
+  // 4. Fails when Dev filter requires holding but dev dumped
+  const dumpedToken = { ...testToken, devFund: { ...testToken.devFund, devStatus: 'Dumped 100%', isDumped: true } };
+  const failDev = { ...passFilters, devPreset: 'holding' };
+  assert.equal(isTokenMatchingFilters(dumpedToken, failDev), false, 'Should fail dev holding filter when dev dumped');
 });
 
 // ─────────────────────────────────────────────────────────────

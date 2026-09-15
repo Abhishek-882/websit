@@ -20,6 +20,11 @@ app.use(express.json());
 // API Routes
 app.use('/api', apiRouter);
 
+// 404 handler for unmatched API routes
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ success: false, error: 'API route not found' });
+});
+
 // Serve frontend static assets from public/
 const publicDir = path.join(__dirname, '../public');
 app.use(express.static(publicDir));

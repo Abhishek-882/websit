@@ -134,13 +134,21 @@ export class DexScreenerService {
     }
 
     // Convert map to array and apply Stage 1 Pre-Filter:
-    // Discard tokens with liquidity < $2,000 (filters out dead or pulled liquidity traps)
-    const validTokens = Array.from(candidateMap.values())
-      .filter(t => t.address && t.marketCap > 0 && t.liquidityUsd >= 2000)
-      .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
+    // Discard tokens with liquidity < $1,000 (filters out dead or pulled liquidity traps)
+    const validTokens = this.preFilterPairs(Array.from(candidateMap.values()));
 
     console.log(`[DexScreener] Stage 1 Pre-Filter: Discovered ${validTokens.length} active high-liquidity Solana tokens.`);
     return validTokens;
+  }
+
+  /**
+   * Pre-filter candidate pairs:
+   * Discard pairs with missing address, 0 market cap, or liquidity < $1,000.
+   */
+  preFilterPairs(pairs) {
+    return (pairs || [])
+      .filter(t => t && t.address && (t.marketCap || 0) > 0 && (t.liquidityUsd || 0) >= 1000)
+      .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
   }
 }
 

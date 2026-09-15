@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Header from './components/Header';
-import FilterBar, { DEFAULT_FILTERS } from './components/FilterBar';
+import FilterBar, { DEFAULT_FILTERS, isTokenMatchingFilters } from './components/FilterBar';
 import TokenTable from './components/TokenTable';
 import ToastContainer from './components/ToastContainer';
 import { soundFX } from './engine/soundFX';
@@ -21,6 +21,14 @@ export default function App() {
   const isDisplayingToastRef = useRef(false);
   const knownAddressSetRef = useRef(new Set());
   const isFirstLoadRef = useRef(true);
+  const toastTimerRef = useRef(null);
+
+  const clearToastTimer = () => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+  };
 
   // Toggle audio chime mute
   const handleToggleSound = () => {
@@ -53,71 +61,59 @@ export default function App() {
   useEffect(() => {
     fetchTokens();
     const interval = setInterval(fetchTokens, 10000); // 10s polling
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      clearToastTimer();
+    };
   }, []);
 
   // ─────────────────────────────────────────────────────────────
   // 2. Client-Side Instant In-Memory Filter Engine (<1ms, 0 API)
   // ─────────────────────────────────────────────────────────────
   const filteredTokens = useMemo(() => {
-    return tokens.filter(token => {
-      // Search filter
-      if (filters.search) {
-        const q = filters.search.trim().toLowerCase();
-        const symbolMatch = (token.symbol || '').toLowerCase().includes(q);
-        const nameMatch = (token.name || '').toLowerCase().includes(q);
-        const addrMatch = (token.address || '').toLowerCase().includes(q);
-        if (!symbolMatch && !nameMatch && !addrMatch) return false;
+    const sellThresholdDecimal = (filters.sellThreshold ?? 80) / 100;
+
+    return tokens.map(token => {
+      // Recompute active vs sold dynamically for each token based on the user's sellThreshold!
+      const allKols = [...(token.kolHolders || []), ...(token.kolSold || [])];
+      const kolMap = new Map();
+      for (const k of allKols) {
+        if (k?.address && !kolMap.has(k.address)) kolMap.set(k.address, k);
       }
+      const uniqueKols = Array.from(kolMap.values());
+      const activeKols = uniqueKols.filter(k => (k.usdValue >= 50 || k.balance > 0) && (k.sellPercentage < sellThresholdDecimal));
+      const soldKols = uniqueKols.filter(k => (k.sellPercentage >= sellThresholdDecimal || k.balance === 0 || k.usdValue < 50));
 
-      // 1. Market Cap
-      const mcap = token.marketCap || 0;
-      if (filters.mcapPreset === '<50k' && mcap >= 50000) return false;
-      if (filters.mcapPreset === '50k-250k' && (mcap < 50000 || mcap > 250000)) return false;
-      if (filters.mcapPreset === '250k-1m' && (mcap < 250000 || mcap > 1000000)) return false;
-      if (filters.mcapPreset === '>1m' && mcap <= 1000000) return false;
-      if (filters.mcapPreset === 'custom') {
-        const min = parseFloat(filters.mcapMin);
-        const max = parseFloat(filters.mcapMax);
-        if (!isNaN(min) && mcap < min) return false;
-        if (!isNaN(max) && mcap > max) return false;
+      const allSmarts = [...(token.smartHolders || []), ...(token.smartSold || [])];
+      const smartMap = new Map();
+      for (const s of allSmarts) {
+        if (s?.address && !smartMap.has(s.address)) smartMap.set(s.address, s);
       }
+      const uniqueSmarts = Array.from(smartMap.values());
+      const activeSmarts = uniqueSmarts.filter(s => (s.usdValue >= 50 || s.balance > 0) && (s.sellPercentage < sellThresholdDecimal));
+      const soldSmarts = uniqueSmarts.filter(s => (s.sellPercentage >= sellThresholdDecimal || s.balance === 0 || s.usdValue < 50));
 
-      // 2. Age (pair creation time)
-      const age = token.ageMs;
-      if (filters.agePreset === '<15m' && (age === null || age > 15 * 60 * 1000)) return false;
-      if (filters.agePreset === '<1h' && (age === null || age > 60 * 60 * 1000)) return false;
-      if (filters.agePreset === '<6h' && (age === null || age > 6 * 3600 * 1000)) return false;
-      if (filters.agePreset === '<24h' && (age === null || age > 24 * 3600 * 1000)) return false;
-
-      // 3. Smart Money (Strict active holding >= $50 USD)
-      const smart = token.smartMoneyCount ?? 0;
-      if (filters.smartPreset === '>=1' && smart < 1) return false;
-      if (filters.smartPreset === '>=2' && smart < 2) return false;
-      if (filters.smartPreset === '>=3' && smart < 3) return false;
-
-      // 4. KOL (Strict active holding >= $50 USD)
-      const kol = token.kolCount ?? 0;
-      if (filters.kolPreset === '>=1' && kol < 1) return false;
-      if (filters.kolPreset === '>=2' && kol < 2) return false;
-
-      // 5. Fund in Dev
-      const dev = token.devFund || {};
-      if (filters.devPreset === 'cex' && !dev.isCexFunded) return false;
-      if (filters.devPreset === 'holding' && dev.isDumped) return false;
-      if (filters.devPreset === 'not_dumped' && dev.isDumped) return false;
-
-      return true;
-    });
+      return {
+        ...token,
+        kolCount: uniqueKols.length > 0 ? activeKols.length : (token.kolCount ?? 0),
+        kolSoldCount: uniqueKols.length > 0 ? soldKols.length : (token.kolSoldCount ?? 0),
+        kolHolders: uniqueKols.length > 0 ? activeKols : token.kolHolders,
+        kolSold: uniqueKols.length > 0 ? soldKols : token.kolSold,
+        smartMoneyCount: uniqueSmarts.length > 0 ? activeSmarts.length : (token.smartMoneyCount ?? 0),
+        smartMoneySoldCount: uniqueSmarts.length > 0 ? soldSmarts.length : (token.smartMoneySoldCount ?? 0),
+        smartHolders: uniqueSmarts.length > 0 ? activeSmarts : token.smartHolders,
+        smartSold: uniqueSmarts.length > 0 ? soldSmarts : token.smartSold,
+      };
+    }).filter(token => isTokenMatchingFilters(token, filters));
   }, [tokens, filters]);
 
   // Calculate active filters count
   const activeFilterCount = useMemo(() => {
     let count = 0;
-    if (filters.mcapPreset !== 'all') count++;
-    if (filters.agePreset !== 'all') count++;
-    if (filters.smartPreset !== 'all') count++;
-    if (filters.kolPreset !== 'all') count++;
+    if (filters.mcapPreset !== 'all' || filters.mcapMinSlider > 0) count++;
+    if (filters.agePreset !== 'all' || filters.ageMaxHours > 0) count++;
+    if (filters.smartPreset !== 'all' || filters.smartMinSlider > 0) count++;
+    if (filters.kolPreset !== 'all' || filters.kolMinSlider > 0) count++;
     if (filters.devPreset !== 'all') count++;
     return count;
   }, [filters]);
@@ -130,48 +126,34 @@ export default function App() {
   // ─────────────────────────────────────────────────────────────
   // 3. Anti-Spam Filter Match Toast Notification Engine
   // ─────────────────────────────────────────────────────────────
-  const matchesActiveFilters = (token) => {
-    const mcap = token.marketCap || 0;
-    if (filters.mcapPreset === '<50k' && mcap >= 50000) return false;
-    if (filters.mcapPreset === '50k-250k' && (mcap < 50000 || mcap > 250000)) return false;
-    if (filters.mcapPreset === '250k-1m' && (mcap < 250000 || mcap > 1000000)) return false;
-    if (filters.mcapPreset === '>1m' && mcap <= 1000000) return false;
-
-    const smart = token.smartMoneyCount ?? 0;
-    if (filters.smartPreset === '>=1' && smart < 1) return false;
-    if (filters.smartPreset === '>=2' && smart < 2) return false;
-    if (filters.smartPreset === '>=3' && smart < 3) return false;
-
-    const kol = token.kolCount ?? 0;
-    if (filters.kolPreset === '>=1' && kol < 1) return false;
-    if (filters.kolPreset === '>=2' && kol < 2) return false;
-
-    return true;
-  };
-
   const handleIncomingTokens = (freshTokens) => {
-    if (isFirstLoadRef.current) {
-      // Seed known addresses on cold start without flooding notifications
-      freshTokens.forEach(t => knownAddressSetRef.current.add(t.address));
-      isFirstLoadRef.current = false;
-      return;
-    }
+    if (!Array.isArray(freshTokens) || freshTokens.length === 0) return;
 
     const now = Date.now();
     const DEDUP_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes per token
+
+    if (isFirstLoadRef.current) {
+      // Seed known addresses on cold start without flooding notifications
+      freshTokens.forEach(t => {
+        knownAddressSetRef.current.add(t.address);
+        alertedHistoryRef.current.set(t.address, now);
+      });
+      isFirstLoadRef.current = false;
+      return;
+    }
 
     for (const t of freshTokens) {
       const isNewArrival = !knownAddressSetRef.current.has(t.address);
       knownAddressSetRef.current.add(t.address);
 
-      // Check if newly discovered or newly matching
-      if (isNewArrival && matchesActiveFilters(t)) {
+      // Check if newly discovered or matching active filters
+      if (isTokenMatchingFilters(t, filters)) {
         const lastAlerted = alertedHistoryRef.current.get(t.address) || 0;
         if (now - lastAlerted > DEDUP_COOLDOWN_MS) {
           alertedHistoryRef.current.set(t.address, now);
           toastQueueRef.current.push({
             token: t,
-            title: `🔥 New Match: $${t.symbol}`,
+            title: `New Match: $${t.symbol}`,
             message: `MCap: $${Math.round(t.marketCap || 0).toLocaleString()} | Smart: ${t.smartMoneyCount ?? 0} holding`,
           });
         }
@@ -191,18 +173,21 @@ export default function App() {
     setActiveToast(next);
     soundFX.playAlertChime();
 
+    clearToastTimer();
     // 8-second auto-dismiss with queue progression
-    setTimeout(() => {
+    toastTimerRef.current = setTimeout(() => {
       setActiveToast(null);
       isDisplayingToastRef.current = false;
       // Process next item in queue after brief delay
-      setTimeout(() => processToastQueue(), 500);
+      toastTimerRef.current = setTimeout(() => processToastQueue(), 500);
     }, 8000);
   };
 
   const handleDismissToast = () => {
+    clearToastTimer();
     setActiveToast(null);
     isDisplayingToastRef.current = false;
+    setTimeout(() => processToastQueue(), 300);
   };
 
   const handleViewToken = (address) => {

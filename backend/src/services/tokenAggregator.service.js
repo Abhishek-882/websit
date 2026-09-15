@@ -75,9 +75,13 @@ export class TokenAggregatorService {
             url: cand.url,
             // GMGN Telemetry fields (initially null until enriched)
             smartMoneyCount: null,
+            smartMoneySoldCount: 0,
             smartHolders: [],
+            smartSold: [],
             kolCount: null,
+            kolSoldCount: 0,
             kolHolders: [],
+            kolSold: [],
             devFund: null,
             enrichedAt: 0,
           });
@@ -89,9 +93,14 @@ export class TokenAggregatorService {
           t.liquidityUsd = cand.liquidityUsd;
           t.volume24h = cand.volume24h;
           t.volume1h = cand.volume1h;
-          t.ageMs = cand.ageMs;
-          t.ageFormatted = cand.ageFormatted;
-          t.url = cand.url;
+          if (!t.icon && cand.icon) t.icon = cand.icon;
+          // Preserve earliest launch timestamp
+          if (cand.pairCreatedAt && (!t.pairCreatedAt || cand.pairCreatedAt < t.pairCreatedAt)) {
+            t.pairCreatedAt = cand.pairCreatedAt;
+          }
+          t.ageMs = t.pairCreatedAt ? (Date.now() - t.pairCreatedAt) : cand.ageMs;
+          t.ageFormatted = dexscreenerService.formatTimeAgo(t.pairCreatedAt || cand.pairCreatedAt);
+          t.url = cand.url || t.url;
         }
       }
 
@@ -118,76 +127,55 @@ export class TokenAggregatorService {
 
           // ── Tier 1 Fast-Gating via Token Info (Weight 1) ──
           const tagStats = gmgnInfo?.wallet_tags_stat || {};
-          const candidateSmartCount = Number(tagStats.smart_wallets || 0);
-          const candidateKolCount = Number(tagStats.renowned_wallets || 0);
+          const candidateSmartCount = Number(tagStats.smart_wallets || tagStats.smart_degen || 0);
+          const candidateKolCount = Number(tagStats.renowned_wallets || tagStats.kol_wallets || 0);
 
-          let activeSmartHolders = [];
           let activeKolHolders = [];
+          let soldKolHolders = [];
+          let activeSmartHolders = [];
+          let soldSmartHolders = [];
 
-          // ── Tier 2 Conditional Deep Verification (Weight 5) ──
-          // Only query top traders if GMGN detected candidate smart or KOL wallets
-          if (candidateSmartCount > 0 || candidateKolCount > 0) {
+          // ── Tier 2 Tagged KOL Deep Verification (tag: renowned) ──
+          if (candidateKolCount > 0) {
             try {
-              const tradersRes = await gmgnKeyPool.getTokenTopTraders(this.chain, token.address, { limit: 50 });
-              const traderList = Array.isArray(tradersRes?.list)
-                ? tradersRes.list
-                : (Array.isArray(tradersRes?.data?.list)
-                  ? tradersRes.data.list
-                  : (Array.isArray(tradersRes?.data) ? tradersRes.data : []));
-
-              for (const tr of traderList) {
-                const usdVal = Number(tr.usd_value || 0);
-                const sellPct = Number(tr.sell_amount_percentage || 0);
-
-                // STRICT USER DIRECTIVE: MUST BE CURRENTLY HOLDING WITH >= $50 USD value, EXCLUDE SOLD OUT
-                if (usdVal < 50 || sellPct >= 0.99) continue;
-
-                const tags = Array.isArray(tr.tags) ? tr.tags.map(t => String(t).toLowerCase()) : [];
-                const singleTag = String(tr.tag || '').toLowerCase();
-                const makerTags = Array.isArray(tr.maker_token_tags) ? tr.maker_token_tags.map(t => String(t).toLowerCase()) : [];
-                const allTags = [...tags, ...makerTags, singleTag];
-
-                const isSmart = allTags.some(t => t.includes('smart') || t === 'smart_degen' || t === 'smart_wallet');
-                const isKol = allTags.some(t => t.includes('kol') || t.includes('renowned') || t.includes('influencer')) || Boolean(tr.twitter_username);
-
-                if (isSmart) {
-                  activeSmartHolders.push({
-                    address: tr.address || tr.wallet_address,
-                    usdValue: Math.round(usdVal * 100) / 100,
-                    sellPercentage: Math.round(sellPct * 100) / 100,
-                    tags: Array.isArray(tr.tags) ? tr.tags : [],
-                  });
-                }
-
-                if (isKol) {
-                  activeKolHolders.push({
-                    address: tr.address || tr.wallet_address,
-                    usdValue: Math.round(usdVal * 100) / 100,
-                    sellPercentage: Math.round(sellPct * 100) / 100,
-                    holdingPercent: Math.round((1 - sellPct) * 100),
-                    name: tr.name || null,
-                    twitterUsername: tr.twitter_username || null,
-                    avatar: tr.avatar || null,
-                  });
-                }
-              }
-            } catch (tradersErr) {
-              console.warn(`[Token Aggregator] Top traders inspection notice for ${token.symbol}:`, tradersErr.message);
+              const kolRes = await gmgnKeyPool.getTokenTopTraders(this.chain, token.address, { tag: 'renowned' });
+              const kolList = kolRes?.list || kolRes?.data?.list || kolRes?.data || [];
+              const parsedKol = this.parseHoldersAndSold(kolList, 0.80);
+              activeKolHolders = parsedKol.holding;
+              soldKolHolders = parsedKol.sold;
+            } catch (kolErr) {
+              console.warn(`[Token Aggregator] KOL inspection notice for ${token.symbol}:`, kolErr.message);
             }
-          } else {
-            // Fast-gate engaged: GMGN confirms 0 smart and 0 renowned wallets touched this token.
-            // Weight 5 call safely avoided!
+          }
+
+          // ── Tier 2 Tagged Smart Money Deep Verification (tag: smart_degen) ──
+          if (candidateSmartCount > 0) {
+            try {
+              const smartRes = await gmgnKeyPool.getTokenTopTraders(this.chain, token.address, { tag: 'smart_degen' });
+              const smartList = smartRes?.list || smartRes?.data?.list || smartRes?.data || [];
+              const parsedSmart = this.parseHoldersAndSold(smartList, 0.80);
+              activeSmartHolders = parsedSmart.holding;
+              soldSmartHolders = parsedSmart.sold;
+            } catch (smartErr) {
+              console.warn(`[Token Aggregator] Smart Money inspection notice for ${token.symbol}:`, smartErr.message);
+            }
           }
 
           // ── Tier 3 Dev Funding & On-chain SOL balance (0 GMGN Cost) ──
           const devInfo = gmgnInfo?.dev || {};
           const devFund = await devFundService.resolveDevFund(devInfo, token.address);
 
-          // Update token record with verified active holding counts
+          // Update token record with verified active holding and sold counts
           token.smartMoneyCount = activeSmartHolders.length;
+          token.smartMoneySoldCount = soldSmartHolders.length;
           token.smartHolders = activeSmartHolders;
+          token.smartSold = soldSmartHolders;
+
           token.kolCount = activeKolHolders.length;
+          token.kolSoldCount = soldKolHolders.length;
           token.kolHolders = activeKolHolders;
+          token.kolSold = soldKolHolders;
+
           token.devFund = devFund;
           token.enrichedAt = Date.now();
 
@@ -199,7 +187,7 @@ export class TokenAggregatorService {
             token.ageFormatted = dexscreenerService.formatTimeAgo(gmgnTs);
           }
 
-          console.log(`[Token Aggregator] ✓ Enriched $${token.symbol} (${token.address.slice(0, 6)}...): MCap=$${Math.round(token.marketCap).toLocaleString()}, Smart=${activeSmartHolders.length} holding (>= $50), KOL=${activeKolHolders.length} holding (>= $50), Dev=${devFund.fundingDisplay}, SOL=${devFund.devBalanceSol ?? '--'}`);
+          console.log(`[Token Aggregator] ✓ Enriched $${token.symbol} (${token.address.slice(0, 6)}...): MCap=$${Math.round(token.marketCap).toLocaleString()}, Smart=${activeSmartHolders.length}h/${soldSmartHolders.length}s, KOL=${activeKolHolders.length}h/${soldKolHolders.length}s, Dev=${devFund.fundingDisplay}, SOL=${devFund.devBalanceSol ?? '--'}`);
         } catch (err) {
           console.warn(`[Token Aggregator] Enrichment notice for ${token.symbol}:`, err.message);
           // Mark enriched to prevent hammering failed tokens repeatedly in tight loops
@@ -215,6 +203,100 @@ export class TokenAggregatorService {
     } finally {
       this.isScanning = false;
     }
+  }
+
+  /**
+   * Parse tagged GMGN trader list into active holding vs sold:
+   * STRICT USER DIRECTIVE:
+   * - Holding: usd_value >= 50, balance > 0, and sell_amount_percentage < 1 (exclude sold out)
+   * - Sold: sell_amount_percentage >= 1 or balance === 0 or usd_value < 50
+   */
+  parseHoldersAndSold(traderList, sellThreshold = 1.0) {
+    const holding = [];
+    const sold = [];
+
+    if (!Array.isArray(traderList)) return { holding, sold };
+
+    for (const tr of traderList) {
+      const usdVal = Number(tr.usd_value || 0);
+      const balance = Number(tr.balance || tr.amount_cur || 0);
+      const sellPct = Number(tr.sell_amount_percentage || 0);
+
+      // Rule: Must hold >= $50 USD value, have balance > 0, and sell_amount_percentage < sellThreshold (< 1)
+      const isHolding = usdVal >= 50 && (balance > 0 || usdVal >= 50) && sellPct < sellThreshold;
+
+      const item = {
+        address: tr.address || tr.wallet_address,
+        name: tr.name || null,
+        twitterUsername: tr.twitter_username || null,
+        avatar: tr.avatar || null,
+        usdValue: Math.round(usdVal * 100) / 100,
+        balance: Math.round(balance * 100) / 100,
+        sellPercentage: Math.round(sellPct * 100) / 100,
+        holdingPercent: Math.round(Math.max(0, 1 - sellPct) * 100),
+        realizedProfit: Math.round(Number(tr.realized_profit || 0)),
+        tags: Array.isArray(tr.tags) ? tr.tags : [],
+      };
+
+      if (isHolding) {
+        holding.push(item);
+      } else {
+        sold.push(item);
+      }
+    }
+
+    return { holding, sold };
+  }
+
+  /**
+   * Filter general top trader list for active Smart Money and KOL holders:
+   * STRICT USER DIRECTIVE: MUST BE CURRENTLY HOLDING WITH >= $50 USD value, EXCLUDE SOLD OUT (sell_amount_percentage < 1)
+   */
+  filterActiveHolders(traderList) {
+    const activeSmartHolders = [];
+    const activeKolHolders = [];
+
+    if (!Array.isArray(traderList)) return { activeSmartHolders, activeKolHolders };
+
+    for (const tr of traderList) {
+      const usdVal = Number(tr.usd_value || 0);
+      const sellPct = Number(tr.sell_amount_percentage || 0);
+
+      // Strict user requirement: usd_value >= 50 and sell_amount_percentage < 1
+      if (usdVal < 50 || sellPct >= 1) continue;
+
+      const tags = Array.isArray(tr.tags) ? tr.tags.map(t => String(t).toLowerCase()) : [];
+      const singleTag = String(tr.tag || '').toLowerCase();
+      const makerTags = Array.isArray(tr.maker_token_tags) ? tr.maker_token_tags.map(t => String(t).toLowerCase()) : [];
+      const tagV2 = String(tr.wallet_tag_v2 || '').toLowerCase();
+      const allTags = [...tags, ...makerTags, singleTag, tagV2];
+
+      const isSmart = allTags.some(t => t.includes('smart') || t === 'smart_degen' || t === 'smart_wallet');
+      const isKol = allTags.some(t => t.includes('kol') || t.includes('renowned') || t.includes('influencer')) || Boolean(tr.twitter_username);
+
+      if (isSmart) {
+        activeSmartHolders.push({
+          address: tr.address || tr.wallet_address,
+          usdValue: Math.round(usdVal * 100) / 100,
+          sellPercentage: Math.round(sellPct * 100) / 100,
+          tags: Array.isArray(tr.tags) ? tr.tags : [],
+        });
+      }
+
+      if (isKol) {
+        activeKolHolders.push({
+          address: tr.address || tr.wallet_address,
+          usdValue: Math.round(usdVal * 100) / 100,
+          sellPercentage: Math.round(sellPct * 100) / 100,
+          holdingPercent: Math.round((1 - sellPct) * 100),
+          name: tr.name || null,
+          twitterUsername: tr.twitter_username || null,
+          avatar: tr.avatar || null,
+        });
+      }
+    }
+
+    return { activeSmartHolders, activeKolHolders };
   }
 
   getEnrichedTokens() {
