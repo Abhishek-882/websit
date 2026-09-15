@@ -1,7 +1,7 @@
-﻿{
+{
   "name": "Meme Cat Radar",
   "short_name": "Meme Cat",
-  "description": "Real-time Base & Solana Meme Token Scanner with GMGN Telemetry",
+  "description": "Real-time Solana Meme Token Scanner & Autonomous Trading Bot with GMGN Telemetry",
   "start_url": "/",
   "id": "/",
   "display": "standalone",

@@ -3,11 +3,14 @@ import Header from './components/Header';
 import FilterBar, { DEFAULT_FILTERS, isTokenMatchingFilters } from './components/FilterBar';
 import TokenTable from './components/TokenTable';
 import ToastContainer from './components/ToastContainer';
+import BotControlsModal from './components/BotControlsModal';
+import TradesModal from './components/TradesModal';
+import { useBotStore } from './stores/botStore';
+import { botApi } from './api/botClient';
 import { soundFX } from './engine/soundFX';
 import { showTokenNotification, initServiceWorker } from './engine/phoneNotification';
 
 export default function App() {
-  const [selectedChain, setSelectedChain] = useState('base'); // User directive: default only based tokens
   const [tokens, setTokens] = useState([]);
   const [lastScanTimestamp, setLastScanTimestamp] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -15,6 +18,17 @@ export default function App() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [soundMuted, setSoundMuted] = useState(soundFX.isMuted());
   const [highlightedAddress, setHighlightedAddress] = useState(null);
+
+  // Trading Bot store & modal state
+  const isBotModalOpen = useBotStore(s => s.isBotModalOpen);
+  const setIsBotModalOpen = useBotStore(s => s.setIsBotModalOpen);
+  const isTradesModalOpen = useBotStore(s => s.isTradesModalOpen);
+  const setIsTradesModalOpen = useBotStore(s => s.setIsTradesModalOpen);
+  const trades = useBotStore(s => s.trades);
+  const setTrades = useBotStore(s => s.setTrades);
+  const connectedWallet = useBotStore(s => s.connectedWallet);
+  const sessionBalance = useBotStore(s => s.sessionBalanceSol);
+  const botConfig = useBotStore(s => s.botConfig);
 
   // Anti-Spam Toast Notification Engine
   const [activeToast, setActiveToast] = useState(null);
@@ -82,11 +96,11 @@ export default function App() {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // 1. Fetch Tokens Loop (every 3.5 seconds ultra-low latency)
+  // 1. Fetch Tokens Loop (Strictly Solana, every 3.5s ultra-low latency)
   // ─────────────────────────────────────────────────────────────
   const fetchTokens = async () => {
     try {
-      const res = await fetch(`/api/tokens?chain=${selectedChain}`);
+      const res = await fetch('/api/tokens?chain=sol');
       if (!res.ok) return;
       const data = await res.json();
       if (data.success && Array.isArray(data.tokens)) {
@@ -98,7 +112,7 @@ export default function App() {
         // Process newly seen tokens for filter-match toast alerts
         handleIncomingTokens(data.tokens);
       }
-    } catch (err) {
+    } catch {
       // Backend API momentarily unreachable during startup
     }
   };
@@ -110,16 +124,7 @@ export default function App() {
       clearInterval(interval);
       clearToastTimer();
     };
-  }, [selectedChain]);
-
-  // When switching chain, reset first load seed
-  const handleSelectChain = (newChain) => {
-    if (newChain !== selectedChain) {
-      setSelectedChain(newChain);
-      setTokens([]);
-      isFirstLoadRef.current = true;
-    }
-  };
+  }, []);
 
   // ─────────────────────────────────────────────────────────────
   // 2. Client-Side Instant In-Memory Filter Engine (<1ms, 0 API)
@@ -167,7 +172,7 @@ export default function App() {
     if (filters.agePreset !== 'all' || filters.ageMaxHours > 0) count++;
     if (filters.smartPreset !== 'all' || filters.smartMinSlider > 0) count++;
     if (filters.kolPreset !== 'all' || filters.kolMinSlider > 0) count++;
-    if (filters.devPreset !== 'all' || (filters.devMinMoneySlider ?? 0) > 0) count++;
+    if (filters.devPreset !== 'all' || (filters.devMinMoneySliderUsd ?? 0) > 0 || (filters.devMinMoneySlider ?? 0) > 0) count++;
     return count;
   }, [filters]);
 
@@ -177,7 +182,46 @@ export default function App() {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // 3. Anti-Spam Filter Match Toast & Phone Notification Engine
+  // 3. Quick Buy via Bot Execution
+  // ─────────────────────────────────────────────────────────────
+  const handleQuickBuy = async (token) => {
+    if (!connectedWallet) {
+      alert('Please connect your Phantom / Solflare wallet first.');
+      return;
+    }
+    if (sessionBalance <= 0) {
+      alert('Your autonomous session wallet has 0 SOL balance. Please top up your session wallet to pace trades.');
+      setIsBotModalOpen(true);
+      return;
+    }
+    const buyAmt = botConfig.buyAmountSol || 0.1;
+    if (!confirm(`Execute autonomous purchase of ${buyAmt} SOL for $${token.symbol} (${token.name}) via Jupiter DEX?`)) {
+      return;
+    }
+    try {
+      const res = await botApi.manualBuy({
+        userWallet: connectedWallet,
+        tokenAddress: token.address,
+        coinName: token.name,
+        coinSymbol: token.symbol,
+        amountSol: buyAmt,
+        slippageBps: botConfig.slippageBps || 500,
+      });
+      if (res.success) {
+        alert(`✓ Buy order landed! Tx: ${res.txSignature?.slice(0, 8)}...`);
+        // Refresh trades
+        const tradesRes = await botApi.getTrades(connectedWallet);
+        if (Array.isArray(tradesRes.trades)) setTrades(tradesRes.trades);
+      } else {
+        alert(`Buy failed: ${res.error}`);
+      }
+    } catch (err) {
+      alert(`Buy failed: ${err.message}`);
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // 4. Anti-Spam Filter Match Toast & Phone Notification Engine
   // ─────────────────────────────────────────────────────────────
   const handleIncomingTokens = (freshTokens) => {
     if (!Array.isArray(freshTokens) || freshTokens.length === 0) return;
@@ -252,7 +296,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#080b12] text-slate-100 flex flex-col font-sans">
       
-      {/* 1. Header with Network Selector (Base default), Live Ticker, Phone Alerts & Mute */}
+      {/* 1. Header with Solana Lock, Live Ticker, Phone Alerts, Bot & Trades Modals */}
       <Header
         lastScanTimestamp={lastScanTimestamp}
         isScanning={isScanning}
@@ -261,10 +305,11 @@ export default function App() {
         soundMuted={soundMuted}
         onToggleSound={handleToggleSound}
         gmgnPool={gmgnPool}
-        selectedChain={selectedChain}
-        onSelectChain={handleSelectChain}
         canInstall={Boolean(installPrompt) && !isInstalled}
         onInstallApp={handleInstallApp}
+        onOpenBotModal={() => setIsBotModalOpen(true)}
+        onOpenTradesModal={() => setIsTradesModalOpen(true)}
+        tradesCount={trades.length}
       />
 
       {/* 2. Main Content Container (Mobile-friendly max width & padding) */}
@@ -285,7 +330,8 @@ export default function App() {
           totalTokensCount={tokens.length}
           highlightedAddress={highlightedAddress}
           onResetFilters={handleResetFilters}
-          selectedChain={selectedChain}
+          selectedChain="sol"
+          onQuickBuy={handleQuickBuy}
         />
 
       </main>
@@ -294,7 +340,7 @@ export default function App() {
       <footer className="border-t border-slate-800/60 py-4 px-4 text-center text-xs text-slate-400 mb-12 md:mb-0">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>Meme Cat Discovery Radar • 100% On-Chain &amp; Official GMGN Telemetry</span>
-          <span className="font-mono text-[11px] text-slate-400">Ban-Proof Multi-Chain Engine • 2000ms Pacing Shield</span>
+          <span className="font-mono text-[11px] text-slate-400">Solana Autonomous Trading Bot • Jupiter v6 &amp; Jito MEV</span>
         </div>
       </footer>
 
@@ -307,6 +353,7 @@ export default function App() {
           <span className="text-base">🐾</span>
           <span className="text-[10px] font-bold">Radar</span>
         </button>
+
         <button
           onClick={() => {
             const el = document.querySelector('button[title*="Filter"]') || document.querySelector('main');
@@ -317,13 +364,28 @@ export default function App() {
           <span className="text-base">🎯</span>
           <span className="text-[10px] font-bold">Filters ({activeFilterCount})</span>
         </button>
+
         <button
-          onClick={() => handleSelectChain(selectedChain === 'base' ? 'sol' : 'base')}
-          className="flex flex-col items-center gap-0.5 text-slate-300 hover:text-white transition-colors"
+          onClick={() => setIsBotModalOpen(true)}
+          className="flex flex-col items-center gap-0.5 text-purple-400 hover:text-purple-300 transition-colors"
         >
-          <span className="text-base">{selectedChain === 'base' ? '🔵' : '🟣'}</span>
-          <span className="text-[10px] font-bold">{selectedChain === 'base' ? 'Base' : 'Solana'}</span>
+          <span className="text-base">🤖</span>
+          <span className="text-[10px] font-bold">Bot</span>
         </button>
+
+        <button
+          onClick={() => setIsTradesModalOpen(true)}
+          className="flex flex-col items-center gap-0.5 text-emerald-400 hover:text-emerald-300 transition-colors relative"
+        >
+          <span className="text-base">💼</span>
+          <span className="text-[10px] font-bold">Trades</span>
+          {trades.length > 0 && (
+            <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-emerald-500 text-slate-950 font-black text-[9px] flex items-center justify-center">
+              {trades.length}
+            </span>
+          )}
+        </button>
+
         {Boolean(installPrompt) && !isInstalled && (
           <button
             onClick={handleInstallApp}
@@ -333,6 +395,7 @@ export default function App() {
             <span className="text-[10px] font-black">Install</span>
           </button>
         )}
+
         <button
           onClick={handleToggleSound}
           className="flex flex-col items-center gap-0.5 text-slate-400 hover:text-white transition-colors"
@@ -347,6 +410,18 @@ export default function App() {
         activeToast={activeToast}
         onDismiss={handleDismissToast}
         onView={handleViewToken}
+      />
+
+      {/* 6. Trading Bot Controls Modal */}
+      <BotControlsModal
+        isOpen={isBotModalOpen}
+        onClose={() => setIsBotModalOpen(false)}
+      />
+
+      {/* 7. Positions & Trades Modal */}
+      <TradesModal
+        isOpen={isTradesModalOpen}
+        onClose={() => setIsTradesModalOpen(false)}
       />
 
     </div>

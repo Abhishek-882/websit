@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import WalletConnector from './WalletConnector';
 import {
   isNotificationSupported,
   getNotificationPermission,
@@ -14,10 +15,11 @@ export default function Header({
   soundMuted,
   onToggleSound,
   gmgnPool,
-  selectedChain = 'base',
-  onSelectChain,
   canInstall = false,
   onInstallApp,
+  onOpenBotModal,
+  onOpenTradesModal,
+  tradesCount = 0,
 }) {
   const [secondsAgo, setSecondsAgo] = useState(null);
   const [notifPermission, setNotifPermission] = useState(getNotificationPermission());
@@ -50,7 +52,7 @@ export default function Header({
 
   const formatAgoString = () => {
     if (isScanning && !lastScanTimestamp) {
-      return `Scanning ${selectedChain === 'base' ? 'Base' : 'Solana'} DEX...`;
+      return 'Scanning Solana DEX...';
     }
     if (secondsAgo === null) {
       return 'Waiting for first scan...';
@@ -62,14 +64,11 @@ export default function Header({
     return `Updated ${mins}m ${remSecs}s ago`;
   };
 
-  const isPoolAvailable = gmgnPool?.available ?? true;
-  const cooldownSec = gmgnPool?.cooldownRemainingSec ?? 0;
-
   return (
     <header className="sticky top-0 z-40 bg-[#0b0f19]/95 backdrop-blur-md border-b border-slate-800/80 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 shadow-lg">
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-2.5 sm:gap-3">
         
-        {/* Left: Brand, Cat Logo & Network Selector */}
+        {/* Left: Brand, Cat Logo & Network Lock */}
         <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2.5 sm:gap-4">
           <div className="flex items-center gap-2.5">
             <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-cyan-500 via-emerald-400 to-purple-500 p-[1.5px] shadow-sm flex items-center justify-center overflow-hidden">
@@ -85,41 +84,42 @@ export default function Header({
                 </h1>
               </div>
               <p className="text-[11px] text-slate-400 hidden xs:flex items-center gap-1.5">
-                <span>Autonomous 60s Discovery</span>
+                <span>Autonomous Solana Scanner</span>
                 <span className="text-slate-600">•</span>
-                <span className="text-emerald-400">Strict Pacing Shield</span>
+                <span className="text-emerald-400">Paced Trading Bot</span>
               </p>
             </div>
           </div>
 
-          {/* User Directive: Network Selection (Default: Base tokens) */}
-          <div className="flex items-center p-0.5 rounded-lg bg-slate-900 border border-slate-700/80 shadow-inner">
+          {/* Locked to Solana Network Only */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/70 border border-purple-800/80 text-purple-300 text-xs font-mono font-bold shadow-sm">
+            <span className="h-2 w-2 rounded-full bg-purple-400 animate-pulse" />
+            <span>🟣 Solana Only</span>
+          </div>
+
+          {/* Quick Bot & Trades Nav Buttons */}
+          <div className="flex items-center gap-1.5">
             <button
-              onClick={() => onSelectChain && onSelectChain('base')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                selectedChain === 'base'
-                  ? 'bg-blue-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title="Base Network (Default)"
+              onClick={onOpenBotModal}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-950/80 border border-cyan-700/80 text-cyan-300 hover:bg-cyan-900/80 text-xs font-bold transition-all shadow-sm active:scale-95"
+              title="Open Solana Trading Bot Control Center"
             >
-              <span className="h-2 w-2 rounded-full bg-blue-400 shadow-sm animate-pulse"></span>
-              <span>🔵 Base</span>
-              {selectedChain === 'base' && (
-                <span className="text-[9px] bg-blue-700 px-1 py-0.2 rounded uppercase tracking-wider font-extrabold">Def</span>
-              )}
+              <span>🤖</span>
+              <span className="hidden sm:inline">Bot</span>
             </button>
+
             <button
-              onClick={() => onSelectChain && onSelectChain('sol')}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                selectedChain === 'sol'
-                  ? 'bg-purple-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title="Solana Network"
+              onClick={onOpenTradesModal}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-200 text-xs font-bold transition-all shadow-sm active:scale-95"
+              title="Open Active Positions & Trade History"
             >
-              <span className="h-2 w-2 rounded-full bg-purple-400 shadow-sm"></span>
-              <span>🟣 Solana</span>
+              <span>💼</span>
+              <span className="hidden sm:inline">Trades</span>
+              {tradesCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-emerald-500 text-slate-950 text-[10px] font-black">
+                  {tradesCount}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -137,7 +137,7 @@ export default function Header({
             </span>
             <span className="text-xs font-mono font-medium text-slate-200">
               {isScanning ? (
-                <span className="text-amber-300">● Scanning {selectedChain.toUpperCase()}...</span>
+                <span className="text-amber-300">● Scanning Solana DEX...</span>
               ) : (
                 <span className="text-slate-300">● Live | {formatAgoString()}</span>
               )}
@@ -154,9 +154,12 @@ export default function Header({
           </div>
         </div>
 
-        {/* Right: Phone Chrome Alerts, PWA Install, Audio & Stats */}
+        {/* Right: Wallet Connect, PWA Install, Alerts & Audio Mute */}
         <div className="flex items-center justify-end flex-wrap gap-2 text-xs">
           
+          {/* Solana Phantom / Solflare Wallet Connector */}
+          <WalletConnector />
+
           {/* PWA 1-Tap App Install Button */}
           {canInstall && (
             <button

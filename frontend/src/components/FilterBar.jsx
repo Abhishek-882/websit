@@ -24,7 +24,7 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
           </svg>
           <input
             type="text"
-            placeholder="Search symbol, name, or address..."
+            placeholder="Search symbol, name, or contract address..."
             value={filters.search}
             onChange={e => update('search', e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-900 border border-slate-700/80 rounded-lg text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 transition-all font-mono"
@@ -56,7 +56,7 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
             <span>{isExpandedMobile ? '▲' : '▼'}</span>
           </button>
 
-          {/* Use Settings: Sell Percentage Threshold */}
+          {/* User Settings: Sell Percentage Threshold */}
           <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-slate-900 border border-slate-700/80 shadow-inner">
             <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
               <span>⚙️ Sell:</span>
@@ -253,7 +253,7 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
           </div>
         </div>
 
-        {/* 3. Smart Money Filter (Active >= $50) */}
+        {/* 3. Smart Money Filter (Active >= $50, Slider up to 50) */}
         <div className="bg-[#0b0f19] p-3 rounded-lg border border-slate-800/90 flex flex-col justify-between space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] uppercase tracking-wider font-semibold text-emerald-400">
@@ -264,23 +264,21 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
 
           <div className="flex flex-wrap gap-1">
             {[
-              { id: 'all', label: 'All' },
-              { id: '>=1', label: '≥ 1' },
-              { id: '>=5', label: '≥ 5' },
-              { id: '>=10', label: '≥ 10' },
-              { id: '>=25', label: '≥ 25' },
+              { id: 'all', label: 'All', num: 0 },
+              { id: '>=1', label: '≥ 1', num: 1 },
+              { id: '>=5', label: '≥ 5', num: 5 },
+              { id: '>=10', label: '≥ 10', num: 10 },
+              { id: '>=25', label: '≥ 25', num: 25 },
+              { id: '>=50', label: '≥ 50', num: 50 },
             ].map(btn => (
               <button
                 key={btn.id}
                 onClick={() => {
                   update('smartPreset', btn.id);
-                  if (btn.id === '>=5') update('smartMinSlider', 5);
-                  else if (btn.id === '>=10') update('smartMinSlider', 10);
-                  else if (btn.id === '>=25') update('smartMinSlider', 25);
-                  else if (btn.id === 'all') update('smartMinSlider', 0);
+                  update('smartMinSlider', btn.num);
                 }}
                 className={`text-[11px] px-2 py-0.5 rounded transition-all font-medium ${
-                  (filters.smartPreset === btn.id && filters.smartMinSlider === 0) || (btn.id !== 'all' && filters.smartMinSlider === parseInt(btn.id.replace('>=', '')))
+                  (filters.smartMinSlider === btn.num && btn.num > 0) || (filters.smartPreset === btn.id && filters.smartMinSlider === 0)
                     ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
                     : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white'
                 }`}
@@ -293,7 +291,7 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
           {/* Interactive Min Smart Money Slider (Up to 50) */}
           <div className="pt-1 border-t border-slate-800/60">
             <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">
-              <span>Min Smart Slider (Max 50):</span>
+              <span>Min Smart (0 to 50):</span>
               <span className="font-mono text-emerald-300 font-semibold">
                 {filters.smartMinSlider > 0 ? `≥ ${filters.smartMinSlider}` : 'Off'}
               </span>
@@ -304,13 +302,17 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
               max="50"
               step="1"
               value={filters.smartMinSlider}
-              onChange={e => update('smartMinSlider', Number(e.target.value))}
+              onChange={e => {
+                const val = Number(e.target.value);
+                update('smartMinSlider', val);
+                update('smartPreset', val === 0 ? 'all' : `>=${val}`);
+              }}
               className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-400"
             />
           </div>
         </div>
 
-        {/* 4. KOL Filter (Active >= $50) */}
+        {/* 4. KOL Filter (Active >= $50, Slider up to 50) */}
         <div className="bg-[#0b0f19] p-3 rounded-lg border border-slate-800/90 flex flex-col justify-between space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] uppercase tracking-wider font-semibold text-purple-400">
@@ -321,23 +323,22 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
 
           <div className="flex flex-wrap gap-1">
             {[
-              { id: 'all', label: 'All' },
-              { id: '>=1', label: '≥ 1' },
-              { id: '>=3', label: '≥ 3' },
-              { id: '>=5', label: '≥ 5' },
-              { id: '>=10', label: '≥ 10' },
+              { id: 'all', label: 'All', num: 0 },
+              { id: '>=1', label: '≥ 1', num: 1 },
+              { id: '>=3', label: '≥ 3', num: 3 },
+              { id: '>=5', label: '≥ 5', num: 5 },
+              { id: '>=10', label: '≥ 10', num: 10 },
+              { id: '>=25', label: '≥ 25', num: 25 },
+              { id: '>=50', label: '≥ 50', num: 50 },
             ].map(btn => (
               <button
                 key={btn.id}
                 onClick={() => {
                   update('kolPreset', btn.id);
-                  if (btn.id === '>=3') update('kolMinSlider', 3);
-                  else if (btn.id === '>=5') update('kolMinSlider', 5);
-                  else if (btn.id === '>=10') update('kolMinSlider', 10);
-                  else if (btn.id === 'all') update('kolMinSlider', 0);
+                  update('kolMinSlider', btn.num);
                 }}
                 className={`text-[11px] px-2 py-0.5 rounded transition-all font-medium ${
-                  (filters.kolPreset === btn.id && filters.kolMinSlider === 0) || (btn.id !== 'all' && filters.kolMinSlider === parseInt(btn.id.replace('>=', '')))
+                  (filters.kolMinSlider === btn.num && btn.num > 0) || (filters.kolPreset === btn.id && filters.kolMinSlider === 0)
                     ? 'bg-purple-500 text-slate-950 font-bold shadow-sm'
                     : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white'
                 }`}
@@ -350,7 +351,7 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
           {/* Interactive Min KOL Slider (Up to 50) */}
           <div className="pt-1 border-t border-slate-800/60">
             <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">
-              <span>Min KOL Slider (Max 50):</span>
+              <span>Min KOL (0 to 50):</span>
               <span className="font-mono text-purple-300 font-semibold">
                 {filters.kolMinSlider > 0 ? `≥ ${filters.kolMinSlider}` : 'Off'}
               </span>
@@ -361,13 +362,17 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
               max="50"
               step="1"
               value={filters.kolMinSlider}
-              onChange={e => update('kolMinSlider', Number(e.target.value))}
+              onChange={e => {
+                const val = Number(e.target.value);
+                update('kolMinSlider', val);
+                update('kolPreset', val === 0 ? 'all' : `>=${val}`);
+              }}
               className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-400"
             />
           </div>
         </div>
 
-        {/* 5. Fund in Dev Filter & Money in Dev Bar */}
+        {/* 5. Fund in Dev Filter & Money in Dev Bar ($0 to $10,000 USD) */}
         <div className="bg-[#0b0f19] p-3 rounded-lg border border-slate-800/90 flex flex-col justify-between space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] uppercase tracking-wider font-semibold text-amber-400">
@@ -397,23 +402,47 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
             ))}
           </div>
 
-          {/* User Directive: Bar / Slider for Money in Dev Wallet */}
+          {/* Quick USD Presets for Dev Money Bar */}
+          <div className="flex flex-wrap gap-1 pt-0.5">
+            {[
+              { label: '≥ $500', val: 500 },
+              { label: '≥ $1K', val: 1000 },
+              { label: '≥ $2.5K', val: 2500 },
+              { label: '≥ $5K', val: 5000 },
+              { label: '≥ $10K', val: 10000 },
+            ].map(p => (
+              <button
+                key={p.val}
+                type="button"
+                onClick={() => update('devMinMoneySliderUsd', filters.devMinMoneySliderUsd === p.val ? 0 : p.val)}
+                className={`text-[10px] px-1.5 py-0.2 rounded font-mono font-bold transition-all ${
+                  (filters.devMinMoneySliderUsd ?? 0) === p.val
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'bg-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* User Directive: Bar / Slider for Money in Dev Wallet ($0 to $10k USD) */}
           <div className="pt-1 border-t border-slate-800/60">
             <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">
-              <span>Min Dev Balance Bar:</span>
+              <span>Dev Money ($0 - $10K):</span>
               <span className="font-mono text-amber-300 font-semibold">
-                {(filters.devMinMoneySlider ?? 0) > 0 ? `≥ ${filters.devMinMoneySlider}` : 'Off'}
+                {(filters.devMinMoneySliderUsd ?? 0) > 0 ? `≥ $${(filters.devMinMoneySliderUsd).toLocaleString()}` : 'Off'}
               </span>
             </div>
             <input
               type="range"
               min="0"
-              max="50"
-              step="0.5"
-              value={filters.devMinMoneySlider ?? 0}
-              onChange={e => update('devMinMoneySlider', Number(e.target.value))}
+              max="10000"
+              step="250"
+              value={filters.devMinMoneySliderUsd ?? 0}
+              onChange={e => update('devMinMoneySliderUsd', Number(e.target.value))}
               className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400"
-              title="Filter by minimum money/SOL/ETH in dev wallet"
+              title="Filter tokens by minimum USD money in dev wallet (up to $10,000 USD)"
             />
           </div>
         </div>

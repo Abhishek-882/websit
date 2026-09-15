@@ -8,17 +8,21 @@ function formatCurrency(val) {
   return `$${val.toFixed(2)}`;
 }
 
-// Visual Capital Progress Bar for Dev Wallet Money
-function DevMoneyBar({ balance, currency = 'SOL' }) {
+// Visual Capital Progress Bar for Dev Wallet Money ($0 to $10,000 USD limit)
+function DevMoneyBar({ balance, currency = 'SOL', devBalanceUsd }) {
   if (balance === null || balance === undefined || isNaN(balance)) {
     return <span className="text-[10px] text-slate-500 font-mono">Dev Bal: --</span>;
   }
 
   const num = Number(balance);
-  // Tiering: 0 to 20+ scale
-  const pct = Math.min(100, Math.max(8, (num / 15) * 100));
-  const isHigh = num >= 10;
-  const isMedium = num >= 1 && num < 10;
+  const usd = devBalanceUsd !== undefined && devBalanceUsd !== null
+    ? Number(devBalanceUsd)
+    : Math.round(num * 150);
+
+  // Calibrated to $10,000 USD limit requested by user
+  const pct = Math.min(100, Math.max(5, (usd / 10000) * 100));
+  const isHigh = usd >= 2500;
+  const isMedium = usd >= 500 && usd < 2500;
 
   const barColor = isHigh
     ? 'bg-gradient-to-r from-emerald-500 to-teal-300 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
@@ -27,11 +31,11 @@ function DevMoneyBar({ balance, currency = 'SOL' }) {
     : 'bg-gradient-to-r from-amber-500 to-rose-400';
 
   return (
-    <div className="space-y-1 w-full max-w-[130px]" title={`Dev Wallet: ${num} ${currency}`}>
+    <div className="space-y-1 w-full max-w-[140px]" title={`Dev Wallet: $${usd.toLocaleString()} (${num.toFixed(2)} ${currency})`}>
       <div className="flex items-center justify-between text-[10px] font-mono">
         <span className="text-slate-400">Dev Money:</span>
         <span className={`font-bold ${isHigh ? 'text-emerald-300' : isMedium ? 'text-cyan-300' : 'text-amber-300'}`}>
-          {num} {currency}
+          ${usd.toLocaleString()} <span className="text-[9px] text-slate-400 font-normal">({num.toFixed(2)} {currency})</span>
         </span>
       </div>
       <div className="h-1.5 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-[0.5px]">
@@ -88,7 +92,8 @@ export default function TokenTable({
   totalTokensCount,
   highlightedAddress,
   onResetFilters,
-  selectedChain = 'base',
+  selectedChain = 'sol',
+  onQuickBuy,
 }) {
   const [copiedAddress, setCopiedAddress] = useState(null);
   const rowRefs = useRef({});
@@ -108,8 +113,7 @@ export default function TokenTable({
     setTimeout(() => setCopiedAddress(null), 1800);
   };
 
-  const isBase = selectedChain === 'base';
-  const nativeCurrency = isBase ? 'ETH' : 'SOL';
+  const nativeCurrency = 'SOL';
 
   // State 1: Cold start / initial discovery scan
   if (totalTokensCount === 0 && isScanning) {
@@ -213,6 +217,16 @@ export default function TokenTable({
                     {token.ageFormatted || '--'}
                   </span>
                   <div className="flex items-center gap-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onQuickBuy && onQuickBuy(token);
+                      }}
+                      className="px-2 py-0.5 rounded bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-black text-[10px] shadow-sm hover:brightness-110 active:scale-95 transition-all"
+                      title="Quick Buy"
+                    >
+                      ⚡ Buy
+                    </button>
                     <a
                       href={gmgnLink}
                       target="_blank"
@@ -305,7 +319,7 @@ export default function TokenTable({
                           </span>
                         )}
                       </div>
-                      <DevMoneyBar balance={devBal} currency={nativeCurrency} />
+                      <DevMoneyBar balance={devBal} currency={nativeCurrency} devBalanceUsd={devFund.devBalanceUsd} />
                     </div>
                   )}
                 </div>
@@ -521,7 +535,7 @@ export default function TokenTable({
                             </span>
                           </div>
                           {/* User Directive: Money in Dev Wallet Bar */}
-                          <DevMoneyBar balance={devBal} currency={nativeCurrency} />
+                          <DevMoneyBar balance={devBal} currency={nativeCurrency} devBalanceUsd={devFund.devBalanceUsd} />
                         </div>
                       )}
                     </td>
@@ -536,9 +550,19 @@ export default function TokenTable({
                       </div>
                     </td>
 
-                    {/* External Links */}
+                    {/* External Links & Actions */}
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onQuickBuy && onQuickBuy(token);
+                          }}
+                          className="px-2.5 py-1 rounded bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-black text-[11px] font-mono shadow-sm transition-all active:scale-95"
+                          title={`Quick Buy $${token.symbol} via Jupiter`}
+                        >
+                          ⚡ Buy
+                        </button>
                         <a
                           href={dexLink}
                           target="_blank"

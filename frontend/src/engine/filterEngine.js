@@ -5,9 +5,9 @@
  * Evaluates tokens across the 5 core discovery metrics:
  * 1. Market Cap (presets, custom min/max, slider)
  * 2. Launch Age (presets, slider)
- * 3. Smart Money (active holding >= $50 USD, presets, slider)
- * 4. KOL Holders (active holding >= $50 USD, presets, slider)
- * 5. Fund in Dev (CEX funding origin, Dev holding / dumped status)
+ * 3. Smart Money (active holding >= $50 USD, presets, slider up to 50)
+ * 4. KOL Holders (active holding >= $50 USD, presets, slider up to 50)
+ * 5. Fund in Dev (CEX funding origin, Dev holding / dumped status, Dev Money $0 to $10,000 USD)
  */
 
 export const DEFAULT_FILTERS = {
@@ -18,12 +18,13 @@ export const DEFAULT_FILTERS = {
   mcapMinSlider: 0, // 0 = all
   agePreset: 'all', // 'all', '<15m', '<1h', '<6h', '<24h'
   ageMaxHours: 0, // 0 = all
-  smartPreset: 'all', // 'all', '>=1', '>=2', '>=3'
-  smartMinSlider: 0, // 0 = all
-  kolPreset: 'all', // 'all', '>=1', '>=2'
-  kolMinSlider: 0, // 0 = all
+  smartPreset: 'all', // 'all', '>=1', '>=5', '>=10', '>=25', '>=50'
+  smartMinSlider: 0, // 0 = all, max = 50
+  kolPreset: 'all', // 'all', '>=1', '>=3', '>=5', '>=10', '>=25', '>=50'
+  kolMinSlider: 0, // 0 = all, max = 50
   devPreset: 'all', // 'all', 'cex', 'holding', 'not_dumped'
-  devMinMoneySlider: 0, // 0 = all
+  devMinMoneySliderUsd: 0, // 0 to 10000 USD
+  devMinMoneySlider: 0, // for backward compatibility
 };
 
 /**
@@ -64,27 +65,42 @@ export function isTokenMatchingFilters(token, filters) {
   if (filters.agePreset === '<24h' && (age === null || age > 24 * 3600 * 1000)) return false;
   if (filters.ageMaxHours > 0 && (age === null || age > filters.ageMaxHours * 3600 * 1000)) return false;
 
-  // 3. Smart Money (Strict active holding >= $50 USD)
+  // 3. Smart Money (Strict active holding >= $50 USD, up to 50)
   const smart = token.smartMoneyCount ?? 0;
   if (filters.smartPreset === '>=1' && smart < 1) return false;
   if (filters.smartPreset === '>=2' && smart < 2) return false;
   if (filters.smartPreset === '>=3' && smart < 3) return false;
+  if (filters.smartPreset === '>=5' && smart < 5) return false;
+  if (filters.smartPreset === '>=10' && smart < 10) return false;
+  if (filters.smartPreset === '>=25' && smart < 25) return false;
+  if (filters.smartPreset === '>=50' && smart < 50) return false;
   if (filters.smartMinSlider > 0 && smart < filters.smartMinSlider) return false;
 
-  // 4. KOL (Strict active holding >= $50 USD)
+  // 4. KOL (Strict active holding >= $50 USD, up to 50)
   const kol = token.kolCount ?? 0;
   if (filters.kolPreset === '>=1' && kol < 1) return false;
-  if (filters.kolPreset === '>=2' && kol < 2) return false;
+  if (filters.kolPreset === '>=3' && kol < 3) return false;
+  if (filters.kolPreset === '>=5' && kol < 5) return false;
+  if (filters.kolPreset === '>=10' && kol < 10) return false;
+  if (filters.kolPreset === '>=25' && kol < 25) return false;
+  if (filters.kolPreset === '>=50' && kol < 50) return false;
   if (filters.kolMinSlider > 0 && kol < filters.kolMinSlider) return false;
 
-  // 5. Fund in Dev
+  // 5. Fund in Dev & Dev Money Bar ($0 to $10k USD)
   const dev = token.devFund || {};
   if (filters.devPreset === 'cex' && !dev.isCexFunded) return false;
   if (filters.devPreset === 'holding' && (dev.devStatus !== 'Holding' || dev.isDumped)) return false;
   if (filters.devPreset === 'not_dumped' && dev.isDumped) return false;
-  if (filters.devMinMoneySlider > 0) {
-    const devBal = Number(dev.devBalanceSol ?? dev.fundingAmountSol ?? 0);
-    if (devBal < filters.devMinMoneySlider) return false;
+
+  const minUsd = filters.devMinMoneySliderUsd > 0
+    ? filters.devMinMoneySliderUsd
+    : (filters.devMinMoneySlider > 0 ? filters.devMinMoneySlider : 0);
+
+  if (minUsd > 0) {
+    const devBalUsd = dev.devBalanceUsd !== undefined && dev.devBalanceUsd !== null
+      ? Number(dev.devBalanceUsd)
+      : Math.round(Number(dev.devBalanceSol ?? dev.fundingAmountSol ?? 0) * 150);
+    if (devBalUsd < minUsd) return false;
   }
 
   return true;

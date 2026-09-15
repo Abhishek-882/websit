@@ -1,16 +1,13 @@
 import { dexscreenerService } from './dexscreener.service.js';
 import { gmgnKeyPool } from './gmgnKeyPool.service.js';
 import { devFundService } from './devFund.service.js';
+import { getAllActiveSessions } from '../db/database.js';
+import { tradingService } from './trading.service.js';
 
 export class TokenAggregatorService {
   constructor() {
-    this.chain = 'base'; // Default network: Base chain
-    this.chainTokens = {
-      base: new Map(),
-      sol: new Map(),
-    };
-    // Compatibility reference
-    this.tokensMap = this.chainTokens.base;
+    this.chain = 'sol'; // Strictly Solana Network
+    this.tokensMap = new Map(); // address -> tokenRecord
     this.lastScanTimestamp = null;
     this.isScanning = false;
     this.scanIntervalMs = 60 * 1000; // 60 seconds automated background cycle
@@ -18,11 +15,12 @@ export class TokenAggregatorService {
     this.fastTickerTimer = null;
     this.cacheTtlMs = 10 * 60 * 1000; // 10 minutes cache TTL
     this.maxGmgnEnrichmentsPerCycle = 6; // Rate-safe limit per cycle
+    this.solPriceUsd = 145; // Live SOL price in USD
   }
 
   startAutoScan() {
     if (this.timer) return;
-    console.log(`[Token Aggregator] 🚀 Autonomous 60s multi-chain auto-scan initialized (Default: Base).`);
+    console.log(`[Token Aggregator] 🚀 Autonomous Solana meme coin auto-scan initialized.`);
     
     // 1. Run initial scan after 1.5s startup delay
     setTimeout(() => {
@@ -40,28 +38,21 @@ export class TokenAggregatorService {
 
   startFastTicker() {
     if (this.fastTickerTimer) return;
-    console.log(`[Token Aggregator] ⚡ Ultra-low latency 3.5s GMGN market cap ticker active.`);
+    console.log(`[Token Aggregator] ⚡ Ultra-low latency 3.5s GMGN Solana market cap ticker active.`);
     
-    let tickerChain = 'base';
     this.fastTickerTimer = setInterval(async () => {
       try {
         if (!gmgnKeyPool.isAvailable()) return;
-        await this.syncFastTicker(tickerChain);
-        tickerChain = tickerChain === 'base' ? 'sol' : 'base';
+        await this.syncFastTicker();
       } catch (err) {
         // Ticker pass-through
       }
     }, 3500);
   }
 
-  async syncFastTicker(chainKey = 'base') {
-    const isBase = chainKey.toLowerCase() === 'base';
-    const chain = isBase ? 'base' : 'sol';
-    const chainMap = this.chainTokens[chain];
-    if (!chainMap) return;
-
+  async syncFastTicker() {
     try {
-      const trending = await gmgnKeyPool.getTrendingSwaps(chain, '1h');
+      const trending = await gmgnKeyPool.getTrendingSwaps('sol', '1h');
       const rankList = trending?.data?.rank || trending?.data || [];
       if (!Array.isArray(rankList)) return;
 
@@ -72,8 +63,8 @@ export class TokenAggregatorService {
         const rawPrice = Number(item.price || 0);
         if (rawMcap <= 0 && rawPrice <= 0) continue;
 
-        if (chainMap.has(item.address)) {
-          const t = chainMap.get(item.address);
+        if (this.tokensMap.has(item.address)) {
+          const t = this.tokensMap.get(item.address);
           const oldMcap = t.marketCap || 0;
           if (rawMcap > 0 && Math.abs(rawMcap - oldMcap) > 0.01) {
             t.priceDirection = rawMcap > oldMcap ? 'up' : 'down';
@@ -87,12 +78,12 @@ export class TokenAggregatorService {
           }
           if (item.logo && !t.icon) t.icon = item.logo;
         } else {
-          // Instantly ingest newly trending meme tokens from GMGN
+          // Instantly ingest newly trending Solana meme tokens from GMGN
           const openTs = item.open_timestamp ? item.open_timestamp * 1000 : null;
-          chainMap.set(item.address, {
+          this.tokensMap.set(item.address, {
             address: item.address,
-            chain: chain,
-            chainId: isBase ? 'base' : 'solana',
+            chain: 'sol',
+            chainId: 'solana',
             symbol: item.symbol || 'TOKEN',
             name: item.name || item.symbol || 'Meme Token',
             icon: item.logo || null,
@@ -108,9 +99,9 @@ export class TokenAggregatorService {
             pairCreatedAt: openTs,
             ageMs: openTs ? (now - openTs) : null,
             ageFormatted: openTs ? dexscreenerService.formatTimeAgo(openTs) : '--',
-            dexId: isBase ? 'uniswap' : 'raydium',
-            url: isBase ? `https://dexscreener.com/base/${item.address}` : `https://dexscreener.com/solana/${item.address}`,
-            gmgnUrl: `https://gmgn.ai/${chain}/token/${item.address}`,
+            dexId: 'raydium',
+            url: `https://dexscreener.com/solana/${item.address}`,
+            gmgnUrl: `https://gmgn.ai/sol/token/${item.address}`,
             smartMoneyCount: null,
             smartMoneySoldCount: 0,
             smartHolders: [],
@@ -141,29 +132,25 @@ export class TokenAggregatorService {
   }
 
   /**
-   * Scan and enrich tokens for a specific chain ('base' or 'sol')
+   * Scan and enrich Solana tokens
    */
-  async scanChain(chainKey = 'base') {
-    const isBase = chainKey.toLowerCase() === 'base';
-    const chain = isBase ? 'base' : 'sol';
-    const chainMap = this.chainTokens[chain];
-
+  async scanSolana() {
     try {
       // Stage 1a: Ingest GMGN Official Trending Swaps
       if (gmgnKeyPool.isAvailable()) {
         try {
-          const gmgnTrending = await gmgnKeyPool.getTrendingSwaps(chain, '1h');
+          const gmgnTrending = await gmgnKeyPool.getTrendingSwaps('sol', '1h');
           const rankList = gmgnTrending?.data?.rank || gmgnTrending?.data || [];
           if (Array.isArray(rankList)) {
             for (const item of rankList) {
-              if (item.address && !chainMap.has(item.address)) {
+              if (item.address && !this.tokensMap.has(item.address)) {
                 const openTs = item.open_timestamp ? item.open_timestamp * 1000 : null;
                 const mcap = Number(item.market_cap || item.fdv || 0);
                 const price = Number(item.price || 0);
-                chainMap.set(item.address, {
+                this.tokensMap.set(item.address, {
                   address: item.address,
-                  chain: chain,
-                  chainId: isBase ? 'base' : 'solana',
+                  chain: 'sol',
+                  chainId: 'solana',
                   symbol: item.symbol || 'TOKEN',
                   name: item.name || item.symbol || 'Meme Token',
                   icon: item.logo || null,
@@ -179,9 +166,9 @@ export class TokenAggregatorService {
                   pairCreatedAt: openTs,
                   ageMs: openTs ? (Date.now() - openTs) : null,
                   ageFormatted: openTs ? dexscreenerService.formatTimeAgo(openTs) : '--',
-                  dexId: isBase ? 'uniswap' : 'raydium',
-                  url: isBase ? `https://dexscreener.com/base/${item.address}` : `https://dexscreener.com/solana/${item.address}`,
-                  gmgnUrl: `https://gmgn.ai/${chain}/token/${item.address}`,
+                  dexId: 'raydium',
+                  url: `https://dexscreener.com/solana/${item.address}`,
+                  gmgnUrl: `https://gmgn.ai/sol/token/${item.address}`,
                   smartMoneyCount: null,
                   smartMoneySoldCount: 0,
                   smartHolders: [],
@@ -197,19 +184,19 @@ export class TokenAggregatorService {
             }
           }
         } catch (trendErr) {
-          console.warn(`[Token Aggregator] GMGN trending notice for ${chain}:`, trendErr.message);
+          console.warn(`[Token Aggregator] GMGN trending notice:`, trendErr.message);
         }
       }
 
       // Stage 1b: DexScreener Discovery & Pre-Filter
-      const candidates = await dexscreenerService.fetchActivePairs(chain);
+      const candidates = await dexscreenerService.fetchActivePairs('solana');
 
       for (const cand of candidates) {
-        if (!chainMap.has(cand.address)) {
-          chainMap.set(cand.address, {
+        if (!this.tokensMap.has(cand.address)) {
+          this.tokensMap.set(cand.address, {
             address: cand.address,
-            chain: chain,
-            chainId: isBase ? 'base' : 'solana',
+            chain: 'sol',
+            chainId: 'solana',
             symbol: cand.symbol,
             name: cand.name,
             icon: cand.icon,
@@ -225,10 +212,9 @@ export class TokenAggregatorService {
             pairCreatedAt: cand.pairCreatedAt,
             ageMs: cand.ageMs,
             ageFormatted: cand.ageFormatted,
-            dexId: cand.dexId,
+            dexId: cand.dexId || 'raydium',
             url: cand.url,
-            gmgnUrl: `https://gmgn.ai/${chain}/token/${cand.address}`,
-            // GMGN Telemetry fields
+            gmgnUrl: `https://gmgn.ai/sol/token/${cand.address}`,
             smartMoneyCount: null,
             smartMoneySoldCount: 0,
             smartHolders: [],
@@ -241,8 +227,7 @@ export class TokenAggregatorService {
             enrichedAt: 0,
           });
         } else {
-          const t = chainMap.get(cand.address);
-          // Do not overwrite authoritative GMGN market cap if already synced
+          const t = this.tokensMap.get(cand.address);
           if (!t.gmgnSynced || !t.marketCap || t.marketCap <= 0) {
             t.priceUsd = cand.priceUsd;
             t.marketCap = cand.marketCap;
@@ -257,27 +242,27 @@ export class TokenAggregatorService {
           t.ageMs = t.pairCreatedAt ? (Date.now() - t.pairCreatedAt) : cand.ageMs;
           t.ageFormatted = dexscreenerService.formatTimeAgo(t.pairCreatedAt || cand.pairCreatedAt);
           t.url = cand.url || t.url;
-          t.gmgnUrl = `https://gmgn.ai/${chain}/token/${cand.address}`;
+          t.gmgnUrl = `https://gmgn.ai/sol/token/${cand.address}`;
         }
       }
 
       // Stage 2: Targeted GMGN & Dev Fund Enrichment
       const now = Date.now();
-      const needEnrichment = Array.from(chainMap.values())
+      const needEnrichment = Array.from(this.tokensMap.values())
         .filter(t => (now - (t.enrichedAt || 0)) > this.cacheTtlMs)
         .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0))
         .slice(0, this.maxGmgnEnrichmentsPerCycle);
 
-      console.log(`[Token Aggregator] Enriching ${needEnrichment.length} ${chain.toUpperCase()} tokens with GMGN telemetry...`);
+      console.log(`[Token Aggregator] Enriching ${needEnrichment.length} SOL tokens with GMGN telemetry...`);
 
       for (const token of needEnrichment) {
         if (!gmgnKeyPool.isAvailable()) {
-          console.warn(`[Token Aggregator] GMGN Key Pool cooldown active. Skipping remaining ${chain.toUpperCase()} tokens.`);
+          console.warn(`[Token Aggregator] GMGN Key Pool cooldown active. Skipping remaining SOL tokens.`);
           break;
         }
 
         try {
-          const gmgnRes = await gmgnKeyPool.getTokenInfo(chain, token.address);
+          const gmgnRes = await gmgnKeyPool.getTokenInfo('sol', token.address);
           const gmgnInfo = gmgnRes?.data || gmgnRes || {};
 
           // Extract GMGN authoritative market cap and price
@@ -308,7 +293,7 @@ export class TokenAggregatorService {
 
           if (candidateKolCount > 0) {
             try {
-              const kolRes = await gmgnKeyPool.getTokenTopTraders(chain, token.address, { tag: 'renowned' });
+              const kolRes = await gmgnKeyPool.getTokenTopTraders('sol', token.address, { tag: 'renowned' });
               const kolList = kolRes?.list || kolRes?.data?.list || kolRes?.data || [];
               const parsedKol = this.parseHoldersAndSold(kolList, 0.80);
               activeKolHolders = parsedKol.holding;
@@ -320,7 +305,7 @@ export class TokenAggregatorService {
 
           if (candidateSmartCount > 0) {
             try {
-              const smartRes = await gmgnKeyPool.getTokenTopTraders(chain, token.address, { tag: 'smart_degen' });
+              const smartRes = await gmgnKeyPool.getTokenTopTraders('sol', token.address, { tag: 'smart_degen' });
               const smartList = smartRes?.list || smartRes?.data?.list || smartRes?.data || [];
               const parsedSmart = this.parseHoldersAndSold(smartList, 0.80);
               activeSmartHolders = parsedSmart.holding;
@@ -331,7 +316,7 @@ export class TokenAggregatorService {
           }
 
           const devInfo = gmgnInfo?.dev || {};
-          const devFund = await devFundService.resolveDevFund(devInfo, token.address);
+          const devFund = await devFundService.resolveDevFund(devInfo, token.address, this.solPriceUsd);
 
           token.smartMoneyCount = activeSmartHolders.length;
           token.smartMoneySoldCount = soldSmartHolders.length;
@@ -346,20 +331,63 @@ export class TokenAggregatorService {
           token.devFund = devFund;
           token.enrichedAt = Date.now();
 
-          console.log(`[Token Aggregator] ✓ Enriched $${token.symbol} (${chain.toUpperCase()}): MCap=$${token.marketCap.toLocaleString()}, Smart=${token.smartMoneyCount}h/${token.smartMoneySoldCount}s, KOL=${token.kolCount}h/${token.kolSoldCount}s, Dev=${devFund?.fundingSource}, Balance=${devFund?.devBalanceSol ?? '--'}`);
+          console.log(`[Token Aggregator] ✓ Enriched $${token.symbol} (SOL): MCap=$${Math.round(token.marketCap).toLocaleString()}, Smart=${token.smartMoneyCount}h/${token.smartMoneySoldCount}s, KOL=${token.kolCount}h/${token.kolSoldCount}s, Dev=${devFund?.fundingSource}, Balance=${devFund?.devBalanceSol ?? '--'} SOL ($${devFund?.devBalanceUsd ?? 0})`);
+
+          // ── Autonomous Auto-Buy Trigger for Active Sessions ──
+          await this.evaluateAutoBuyTriggers(token);
+
         } catch (enrichErr) {
           console.warn(`[Token Aggregator] Enrichment error for $${token.symbol}:`, enrichErr.message);
         }
       }
     } catch (err) {
-      console.warn(`[Token Aggregator] Error scanning ${chainKey}:`, err.message);
+      console.warn(`[Token Aggregator] Error scanning Solana:`, err.message);
     }
   }
 
   /**
-   * Two-Stage Discovery & Enrichment Cycle:
-   * Defaults to Base chain, and also updates Solana.
+   * Evaluates if an enriched token qualifies for auto-buy across active bot sessions
    */
+  async evaluateAutoBuyTriggers(token) {
+    try {
+      const activeSessions = await getAllActiveSessions();
+      if (!Array.isArray(activeSessions) || activeSessions.length === 0) return;
+
+      for (const session of activeSessions) {
+        const cfg = session.bot_config || {};
+        if (!cfg.autoBuy) continue;
+
+        // Verify criteria
+        const mcap = token.marketCap || 0;
+        const smart = token.smartMoneyCount ?? 0;
+        const kol = token.kolCount ?? 0;
+        const devMoneyUsd = token.devFund?.devBalanceUsd ?? 0;
+
+        if (cfg.minMcap && mcap < cfg.minMcap) continue;
+        if (cfg.maxMcap && mcap > cfg.maxMcap) continue;
+        if (cfg.minSmart && smart < cfg.minSmart) continue;
+        if (cfg.minKol && kol < cfg.minKol) continue;
+        if (cfg.minDevUsd && devMoneyUsd < cfg.minDevUsd) continue;
+
+        console.log(`[BOT] 🎯 Auto-Buy criteria matched for $${token.symbol} by wallet ${session.user_wallet.slice(0, 8)}...`);
+
+        tradingService.autoBuy({
+          userWallet: session.user_wallet,
+          tokenAddress: token.address,
+          coinName: token.name,
+          coinSymbol: token.symbol,
+          amountSol: Number(cfg.buyAmountSol || 0.1),
+          slippageBps: Number(cfg.slippageBps || 500),
+          useJito: cfg.useJito ?? true,
+        }).catch(err => {
+          console.warn(`[BOT] Auto-buy execution notice for $${token.symbol}:`, err.message);
+        });
+      }
+    } catch (err) {
+      // Pass-through
+    }
+  }
+
   async runScanCycle() {
     if (this.isScanning) {
       console.log('[Token Aggregator] Scan cycle already running, skipping overlapping tick.');
@@ -368,18 +396,13 @@ export class TokenAggregatorService {
 
     this.isScanning = true;
     const startTime = Date.now();
-    console.log('[Token Aggregator] ⚡ Starting autonomous multi-chain scan cycle...');
+    console.log('[Token Aggregator] ⚡ Starting autonomous Solana scan cycle...');
 
     try {
-      // 1. Scan Base (default user priority)
-      await this.scanChain('base');
-
-      // 2. Scan Solana
-      await this.scanChain('sol');
-
+      await this.scanSolana();
       this.lastScanTimestamp = Date.now();
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`[Token Aggregator] Scan cycle finished in ${elapsed}s. Tracked Base: ${this.chainTokens.base.size}, Solana: ${this.chainTokens.sol.size}`);
+      console.log(`[Token Aggregator] Scan cycle finished in ${elapsed}s. Tracked Solana: ${this.tokensMap.size}`);
     } catch (cycleErr) {
       console.error('[Token Aggregator] Scan cycle error:', cycleErr.message);
     } finally {
@@ -387,12 +410,6 @@ export class TokenAggregatorService {
     }
   }
 
-  /**
-   * Parse tagged GMGN trader list into active holding vs sold:
-   * STRICT USER DIRECTIVE:
-   * - Holding: usd_value >= 50, balance > 0, and sell_amount_percentage < 1 (exclude sold out)
-   * - Sold: sell_amount_percentage >= 1 or balance === 0 or usd_value < 50
-   */
   parseHoldersAndSold(traderList, sellThreshold = 1.0) {
     const holding = [];
     const sold = [];
@@ -404,7 +421,6 @@ export class TokenAggregatorService {
       const balance = Number(tr.balance || tr.amount_cur || 0);
       const sellPct = Number(tr.sell_amount_percentage || 0);
 
-      // Rule: Must hold >= $50 USD value, have balance > 0, and sell_amount_percentage < sellThreshold (< 1)
       const isHolding = usdVal >= 50 && (balance > 0 || usdVal >= 50) && sellPct < sellThreshold;
 
       const item = {
@@ -431,64 +447,41 @@ export class TokenAggregatorService {
   }
 
   /**
-   * Filter general top trader list for active Smart Money and KOL holders:
-   * STRICT USER DIRECTIVE: MUST BE CURRENTLY HOLDING WITH >= $50 USD value, EXCLUDE SOLD OUT (sell_amount_percentage < 1)
+   * Evaluates active holders for tests and telemetry
    */
-  filterActiveHolders(traderList) {
+  filterActiveHolders(traders = []) {
     const activeSmartHolders = [];
     const activeKolHolders = [];
 
-    if (!Array.isArray(traderList)) return { activeSmartHolders, activeKolHolders };
+    for (const t of traders) {
+      const tags = Array.isArray(t.tags) ? t.tags : [];
+      const tagV2 = (t.wallet_tag_v2 || '').toLowerCase();
+      const isSmart = tags.some(tag => tag.includes('smart')) || tagV2.includes('smart');
+      const isKol = tags.some(tag => tag.includes('renowned') || tag.includes('kol')) || tagV2.includes('kol') || Boolean(t.twitter_username);
 
-    for (const tr of traderList) {
-      const usdVal = Number(tr.usd_value || 0);
-      const sellPct = Number(tr.sell_amount_percentage || 0);
+      const usdVal = Number(t.usd_value || t.usdValue || 0);
+      const sellPct = Number(t.sell_amount_percentage ?? t.sellPercentage ?? 0);
 
-      // Strict user requirement: usd_value >= 50 and sell_amount_percentage < 1
-      if (usdVal < 50 || sellPct >= 1) continue;
+      // Must be currently holding with >= $50 USD value and not 100% sold out (sell < 1)
+      const isActiveHolder = usdVal >= 50 && sellPct < 1;
 
-      const tags = Array.isArray(tr.tags) ? tr.tags.map(t => String(t).toLowerCase()) : [];
-      const singleTag = String(tr.tag || '').toLowerCase();
-      const makerTags = Array.isArray(tr.maker_token_tags) ? tr.maker_token_tags.map(t => String(t).toLowerCase()) : [];
-      const tagV2 = String(tr.wallet_tag_v2 || '').toLowerCase();
-      const allTags = [...tags, ...makerTags, singleTag, tagV2];
-
-      const isSmart = allTags.some(t => t.includes('smart') || t === 'smart_degen' || t === 'smart_wallet');
-      const isKol = allTags.some(t => t.includes('kol') || t.includes('renowned') || t.includes('influencer')) || Boolean(tr.twitter_username);
-
-      if (isSmart) {
-        activeSmartHolders.push({
-          address: tr.address || tr.wallet_address,
-          usdValue: Math.round(usdVal * 100) / 100,
-          sellPercentage: Math.round(sellPct * 100) / 100,
-          tags: Array.isArray(tr.tags) ? tr.tags : [],
-        });
+      if (isSmart && isActiveHolder) {
+        activeSmartHolders.push(t);
       }
-
-      if (isKol) {
-        activeKolHolders.push({
-          address: tr.address || tr.wallet_address,
-          usdValue: Math.round(usdVal * 100) / 100,
-          sellPercentage: Math.round(sellPct * 100) / 100,
-          holdingPercent: Math.round((1 - sellPct) * 100),
-          name: tr.name || null,
-          twitterUsername: tr.twitter_username || null,
-          avatar: tr.avatar || null,
-        });
+      if (isKol && isActiveHolder) {
+        activeKolHolders.push(t);
       }
     }
 
     return { activeSmartHolders, activeKolHolders };
   }
 
-  getEnrichedTokens(chain = 'base') {
-    const isSol = String(chain).toLowerCase().startsWith('sol');
-    const targetChain = isSol ? 'sol' : 'base';
-    const map = this.chainTokens ? (this.chainTokens[targetChain] || this.chainTokens.base) : this.tokensMap;
-    const tokens = Array.from(map.values());
+  getEnrichedTokens() {
+    const tokens = Array.from(this.tokensMap.values());
     return {
       tokens,
-      chain: targetChain,
+      chain: 'sol',
+      solPriceUsd: this.solPriceUsd,
       lastScanTimestamp: this.lastScanTimestamp,
       totalCount: tokens.length,
       isScanning: this.isScanning,

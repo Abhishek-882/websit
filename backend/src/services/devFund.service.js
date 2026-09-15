@@ -63,9 +63,8 @@ export class DevFundService {
   }
 
   /**
-   * Fetch live on-chain balance for developer address.
-   * If devAddress starts with '0x', queries Base JSON-RPC (eth_getBalance).
-   * Otherwise queries Solana JSON-RPC (getBalance).
+   * Fetch live on-chain balance for developer Solana address.
+   * Multi-RPC failover across publicnode, official mainnet, and ankr.
    */
   async getDevSolBalance(devAddress) {
     if (!devAddress) return null;
@@ -75,88 +74,68 @@ export class DevFundService {
       return cached.devBalanceSol;
     }
 
-    // 1. EVM / Base Chain Address (0x...)
-    if (devAddress.startsWith('0x')) {
+    const RPCS = [
+      RPC_URL,
+      'https://solana-rpc.publicnode.com',
+      'https://api.mainnet-beta.solana.com',
+      'https://rpc.ankr.com/solana',
+    ];
+
+    for (const rpc of RPCS) {
       try {
-        const resp = await fetch('https://mainnet.base.org', {
+        const resp = await fetch(rpc, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             jsonrpc: '2.0',
             id: 1,
-            method: 'eth_getBalance',
-            params: [devAddress, 'latest'],
+            method: 'getBalance',
+            params: [devAddress, { commitment: 'confirmed' }],
           }),
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(4000),
         });
+
         if (resp.ok) {
           const data = await resp.json();
-          if (data?.result) {
-            const wei = BigInt(data.result);
-            const eth = Number(wei) / 1e18;
-            const formatted = Math.round(eth * 1000) / 1000;
-            this.devCache.set(devAddress, { devBalanceSol: formatted, cachedAt: Date.now() });
-            return formatted;
+          const lamports = data?.result?.value;
+          if (typeof lamports === 'number') {
+            const sol = Math.round((lamports / 1e9) * 1000) / 1000;
+            this.devCache.set(devAddress, { devBalanceSol: sol, cachedAt: Date.now() });
+            return sol;
           }
         }
-      } catch (evmErr) {
-        // Fallback
+      } catch {
+        // Try next RPC in pool
       }
-      return null;
     }
 
-    // 2. Solana Address (base58) - Direct JSON-RPC HTTP POST
+    // Secondary fallback via Connection
     try {
-      const resp = await fetch(RPC_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'getBalance',
-          params: [devAddress, { commitment: 'confirmed' }],
-        }),
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (resp.ok) {
-        const data = await resp.json();
-        const lamports = data?.result?.value;
-        if (typeof lamports === 'number') {
-          const sol = Math.round((lamports / 1e9) * 100) / 100;
-          this.devCache.set(devAddress, { devBalanceSol: sol, cachedAt: Date.now() });
-          return sol;
-        }
-      }
-    } catch (rpcErr) {
-      // Primary HTTP RPC fallback
-    }
-
-    // 3. Secondary fallback via Connection
-    try {
-      if (this.connection && !devAddress.startsWith('0x')) {
+      if (this.connection) {
         const pubkey = new PublicKey(devAddress);
         const lamports = await this.connection.getBalance(pubkey);
-        const sol = Math.round((lamports / 1e9) * 100) / 100;
+        const sol = Math.round((lamports / 1e9) * 1000) / 1000;
         this.devCache.set(devAddress, { devBalanceSol: sol, cachedAt: Date.now() });
         return sol;
       }
-    } catch (err) {
-      return null;
+    } catch {
+      // Fallback
     }
+
     return null;
   }
 
   /**
    * Enrich dev funding & net-worth data from GMGN dev telemetry + on-chain balance
    */
-  async resolveDevFund(gmgnDevInfo, coinDevAddress = null) {
+  async resolveDevFund(gmgnDevInfo, coinDevAddress = null, solPriceUsd = 150) {
     const devAddress = gmgnDevInfo?.creator_address || gmgnDevInfo?.address || coinDevAddress || null;
     const rawFundFrom = gmgnDevInfo?.fund_from || null;
     const rawFundAmount = gmgnDevInfo?.fund_amount || null;
 
     const funding = this.classifyFundingSource(rawFundFrom, rawFundAmount);
     const solBalance = devAddress ? await this.getDevSolBalance(devAddress) : null;
+    const devBalanceUsd = solBalance !== null ? Math.round(solBalance * solPriceUsd) : (funding.amountSol ? Math.round(funding.amountSol * solPriceUsd) : null);
 
     const creatorStatus = String(gmgnDevInfo?.creator_token_status || '').toLowerCase();
     const isDumped = creatorStatus.includes('close') || creatorStatus.includes('dump') || creatorStatus.includes('sold') || creatorStatus === 'creator_close';
@@ -172,6 +151,7 @@ export class DevFundService {
     return {
       devAddress,
       devBalanceSol: solBalance,
+      devBalanceUsd: devBalanceUsd,
       fundingSource: funding.source,
       isCexFunded: funding.isCex,
       fundingAmountSol: funding.amountSol,
