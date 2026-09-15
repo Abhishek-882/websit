@@ -44,6 +44,44 @@ function DevMoneyBar({ balance, currency = 'SOL' }) {
   );
 }
 
+// Low-Latency Market Cap & Live Price Display with Flashes
+function MarketCapDisplay({ token }) {
+  const mcap = token.marketCap;
+  const price = token.priceUsd;
+  const direction = token.priceDirection;
+  const isGmgn = token.gmgnSynced;
+
+  const flashBg = direction === 'up'
+    ? 'text-emerald-300 bg-emerald-950/70 ring-1 ring-emerald-500/50'
+    : direction === 'down'
+    ? 'text-rose-300 bg-rose-950/70 ring-1 ring-rose-500/50'
+    : 'text-cyan-300';
+
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-1">
+        <span className={`font-mono font-black text-sm px-1 py-0.5 rounded transition-all duration-500 ${flashBg}`}>
+          {formatCurrency(mcap)}
+        </span>
+        {direction === 'up' && <span className="text-emerald-400 text-xs font-bold animate-pulse">▲</span>}
+        {direction === 'down' && <span className="text-rose-400 text-xs font-bold animate-pulse">▼</span>}
+      </div>
+      <div className="flex items-center gap-1 text-[10px] font-mono text-slate-400">
+        <span>
+          ${Number(price || 0) < 0.0001 && Number(price || 0) > 0
+            ? Number(price || 0).toExponential(3)
+            : Number(price || 0).toFixed(6)}
+        </span>
+        {isGmgn && (
+          <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-950/80 text-emerald-400 font-bold border border-emerald-800/80">
+            GMGN
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function TokenTable({
   tokens,
   isScanning,
@@ -199,11 +237,9 @@ export default function TokenTable({
               <div className="grid grid-cols-2 gap-2.5 pt-2.5 text-xs">
                 {/* 1. Market Cap */}
                 <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                  <span className="text-[10px] uppercase font-semibold text-slate-400 block">Market Cap</span>
-                  <span className="font-mono font-black text-sm text-cyan-300">
-                    {formatCurrency(token.marketCap)}
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-mono block">
+                  <span className="text-[10px] uppercase font-semibold text-slate-400 block mb-0.5">Market Cap</span>
+                  <MarketCapDisplay token={token} />
+                  <span className="text-[10px] text-slate-400 font-mono block mt-1">
                     Liq: {formatCurrency(token.liquidityUsd)}
                   </span>
                 </div>
@@ -385,12 +421,7 @@ export default function TokenTable({
 
                     {/* 1. Market Cap */}
                     <td className="py-3 px-3 font-mono">
-                      <div className="font-bold text-slate-100 text-sm">
-                        {formatCurrency(token.marketCap)}
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        ${Number(token.priceUsd || 0).toFixed(6)}
-                      </div>
+                      <MarketCapDisplay token={token} />
                     </td>
 
                     {/* 2. Launch Age */}

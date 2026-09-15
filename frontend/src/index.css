@@ -52,3 +52,7 @@
 .row-highlight-pulse {
   animation: rowPulseGlow 3.5s ease-out forwards;
 }
+
+.safe-area-bottom {
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+}

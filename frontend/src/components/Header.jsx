@@ -16,6 +16,8 @@ export default function Header({
   gmgnPool,
   selectedChain = 'base',
   onSelectChain,
+  canInstall = false,
+  onInstallApp,
 }) {
   const [secondsAgo, setSecondsAgo] = useState(null);
   const [notifPermission, setNotifPermission] = useState(getNotificationPermission());
@@ -140,6 +142,10 @@ export default function Header({
                 <span className="text-slate-300">● Live | {formatAgoString()}</span>
               )}
             </span>
+            <span className="hidden xl:inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 bg-emerald-950/70 border border-emerald-800/80 px-2 py-0.5 rounded-full shadow-sm">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>GMGN Live (3.5s)</span>
+            </span>
           </div>
 
           <div className="sm:hidden flex items-center gap-1 text-[11px] font-mono text-slate-400">
@@ -148,8 +154,20 @@ export default function Header({
           </div>
         </div>
 
-        {/* Right: Phone Chrome Alerts, Audio & Stats */}
+        {/* Right: Phone Chrome Alerts, PWA Install, Audio & Stats */}
         <div className="flex items-center justify-end flex-wrap gap-2 text-xs">
+          
+          {/* PWA 1-Tap App Install Button */}
+          {canInstall && (
+            <button
+              onClick={onInstallApp}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-gradient-to-r from-pink-600 via-rose-600 to-amber-500 text-white font-black text-xs shadow-lg hover:brightness-110 active:scale-95 transition-all animate-bounce"
+              title="Install Meme Cat App on your device Home Screen"
+            >
+              <span>📲</span>
+              <span>Install App</span>
+            </button>
+          )}
           
           {/* Chrome Phone Notification Button */}
           {isNotificationSupported() && (

@@ -15,6 +15,7 @@ export class TokenAggregatorService {
     this.isScanning = false;
     this.scanIntervalMs = 60 * 1000; // 60 seconds automated background cycle
     this.timer = null;
+    this.fastTickerTimer = null;
     this.cacheTtlMs = 10 * 60 * 1000; // 10 minutes cache TTL
     this.maxGmgnEnrichmentsPerCycle = 6; // Rate-safe limit per cycle
   }
@@ -23,21 +24,119 @@ export class TokenAggregatorService {
     if (this.timer) return;
     console.log(`[Token Aggregator] 🚀 Autonomous 60s multi-chain auto-scan initialized (Default: Base).`);
     
-    // Run initial scan after 1.5s startup delay
+    // 1. Run initial scan after 1.5s startup delay
     setTimeout(() => {
       this.runScanCycle().catch(err => console.warn('[Token Aggregator] Initial scan notice:', err.message));
     }, 1500);
 
-    // Schedule regular 60-second cycle
+    // 2. Schedule regular 60-second cycle for deep discovery and dev telemetry
     this.timer = setInterval(() => {
       this.runScanCycle().catch(err => console.warn('[Token Aggregator] Periodic scan notice:', err.message));
     }, this.scanIntervalMs);
+
+    // 3. Start ultra-low-latency 3.5s GMGN market cap & price fast ticker
+    this.startFastTicker();
+  }
+
+  startFastTicker() {
+    if (this.fastTickerTimer) return;
+    console.log(`[Token Aggregator] ⚡ Ultra-low latency 3.5s GMGN market cap ticker active.`);
+    
+    let tickerChain = 'base';
+    this.fastTickerTimer = setInterval(async () => {
+      try {
+        if (!gmgnKeyPool.isAvailable()) return;
+        await this.syncFastTicker(tickerChain);
+        tickerChain = tickerChain === 'base' ? 'sol' : 'base';
+      } catch (err) {
+        // Ticker pass-through
+      }
+    }, 3500);
+  }
+
+  async syncFastTicker(chainKey = 'base') {
+    const isBase = chainKey.toLowerCase() === 'base';
+    const chain = isBase ? 'base' : 'sol';
+    const chainMap = this.chainTokens[chain];
+    if (!chainMap) return;
+
+    try {
+      const trending = await gmgnKeyPool.getTrendingSwaps(chain, '1h');
+      const rankList = trending?.data?.rank || trending?.data || [];
+      if (!Array.isArray(rankList)) return;
+
+      const now = Date.now();
+      for (const item of rankList) {
+        if (!item.address) continue;
+        const rawMcap = Number(item.market_cap || item.fdv || 0);
+        const rawPrice = Number(item.price || 0);
+        if (rawMcap <= 0 && rawPrice <= 0) continue;
+
+        if (chainMap.has(item.address)) {
+          const t = chainMap.get(item.address);
+          const oldMcap = t.marketCap || 0;
+          if (rawMcap > 0 && Math.abs(rawMcap - oldMcap) > 0.01) {
+            t.priceDirection = rawMcap > oldMcap ? 'up' : 'down';
+            t.marketCap = rawMcap;
+            t.gmgnMcap = rawMcap;
+            t.gmgnSynced = true;
+            t.lastPriceUpdate = now;
+          }
+          if (rawPrice > 0) {
+            t.priceUsd = rawPrice;
+          }
+          if (item.logo && !t.icon) t.icon = item.logo;
+        } else {
+          // Instantly ingest newly trending meme tokens from GMGN
+          const openTs = item.open_timestamp ? item.open_timestamp * 1000 : null;
+          chainMap.set(item.address, {
+            address: item.address,
+            chain: chain,
+            chainId: isBase ? 'base' : 'solana',
+            symbol: item.symbol || 'TOKEN',
+            name: item.name || item.symbol || 'Meme Token',
+            icon: item.logo || null,
+            priceUsd: rawPrice,
+            marketCap: rawMcap,
+            gmgnMcap: rawMcap,
+            gmgnSynced: true,
+            priceDirection: 'neutral',
+            lastPriceUpdate: now,
+            liquidityUsd: Number(item.liquidity || 0),
+            volume24h: Number(item.volume24h || item.volume || 0),
+            volume1h: Number(item.volume1h || 0),
+            pairCreatedAt: openTs,
+            ageMs: openTs ? (now - openTs) : null,
+            ageFormatted: openTs ? dexscreenerService.formatTimeAgo(openTs) : '--',
+            dexId: isBase ? 'uniswap' : 'raydium',
+            url: isBase ? `https://dexscreener.com/base/${item.address}` : `https://dexscreener.com/solana/${item.address}`,
+            gmgnUrl: `https://gmgn.ai/${chain}/token/${item.address}`,
+            smartMoneyCount: null,
+            smartMoneySoldCount: 0,
+            smartHolders: [],
+            smartSold: [],
+            kolCount: null,
+            kolSoldCount: 0,
+            kolHolders: [],
+            kolSold: [],
+            devFund: null,
+            enrichedAt: 0,
+          });
+        }
+      }
+    } catch (err) {
+      // Ticker error caught cleanly
+    }
   }
 
   stopAutoScan() {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.fastTickerTimer) {
+      clearInterval(this.fastTickerTimer);
+      this.fastTickerTimer = null;
     }
   }
 
@@ -59,6 +158,8 @@ export class TokenAggregatorService {
             for (const item of rankList) {
               if (item.address && !chainMap.has(item.address)) {
                 const openTs = item.open_timestamp ? item.open_timestamp * 1000 : null;
+                const mcap = Number(item.market_cap || item.fdv || 0);
+                const price = Number(item.price || 0);
                 chainMap.set(item.address, {
                   address: item.address,
                   chain: chain,
@@ -66,8 +167,12 @@ export class TokenAggregatorService {
                   symbol: item.symbol || 'TOKEN',
                   name: item.name || item.symbol || 'Meme Token',
                   icon: item.logo || null,
-                  priceUsd: Number(item.price || 0),
-                  marketCap: Number(item.market_cap || item.fdv || 0),
+                  priceUsd: price,
+                  marketCap: mcap,
+                  gmgnMcap: mcap,
+                  gmgnSynced: true,
+                  priceDirection: 'neutral',
+                  lastPriceUpdate: Date.now(),
                   liquidityUsd: Number(item.liquidity || 0),
                   volume24h: Number(item.volume24h || item.volume || 0),
                   volume1h: Number(item.volume1h || 0),
@@ -110,6 +215,10 @@ export class TokenAggregatorService {
             icon: cand.icon,
             priceUsd: cand.priceUsd,
             marketCap: cand.marketCap,
+            gmgnMcap: 0,
+            gmgnSynced: false,
+            priceDirection: 'neutral',
+            lastPriceUpdate: Date.now(),
             liquidityUsd: cand.liquidityUsd,
             volume24h: cand.volume24h,
             volume1h: cand.volume1h,
@@ -133,11 +242,14 @@ export class TokenAggregatorService {
           });
         } else {
           const t = chainMap.get(cand.address);
-          t.priceUsd = cand.priceUsd;
-          t.marketCap = cand.marketCap;
-          t.liquidityUsd = cand.liquidityUsd;
-          t.volume24h = cand.volume24h;
-          t.volume1h = cand.volume1h;
+          // Do not overwrite authoritative GMGN market cap if already synced
+          if (!t.gmgnSynced || !t.marketCap || t.marketCap <= 0) {
+            t.priceUsd = cand.priceUsd;
+            t.marketCap = cand.marketCap;
+          }
+          t.liquidityUsd = cand.liquidityUsd || t.liquidityUsd;
+          t.volume24h = cand.volume24h || t.volume24h;
+          t.volume1h = cand.volume1h || t.volume1h;
           if (!t.icon && cand.icon) t.icon = cand.icon;
           if (cand.pairCreatedAt && (!t.pairCreatedAt || cand.pairCreatedAt < t.pairCreatedAt)) {
             t.pairCreatedAt = cand.pairCreatedAt;
@@ -167,6 +279,23 @@ export class TokenAggregatorService {
         try {
           const gmgnRes = await gmgnKeyPool.getTokenInfo(chain, token.address);
           const gmgnInfo = gmgnRes?.data || gmgnRes || {};
+
+          // Extract GMGN authoritative market cap and price
+          const gmgnLivePrice = Number(gmgnInfo?.price?.price || gmgnInfo?.price || 0);
+          const gmgnSupply = Number(gmgnInfo?.circulating_supply || gmgnInfo?.total_supply || 0);
+          const calculatedMcap = gmgnLivePrice > 0 && gmgnSupply > 0 ? (gmgnLivePrice * gmgnSupply) : 0;
+          if (calculatedMcap > 0) {
+            const oldMcap = token.marketCap || 0;
+            if (oldMcap > 0 && Math.abs(calculatedMcap - oldMcap) > 0.01) {
+              token.priceDirection = calculatedMcap > oldMcap ? 'up' : 'down';
+            }
+            token.marketCap = calculatedMcap;
+            token.gmgnMcap = calculatedMcap;
+            token.priceUsd = gmgnLivePrice;
+            token.gmgnSynced = true;
+            token.lastPriceUpdate = Date.now();
+          }
+          if (gmgnInfo?.logo && !token.icon) token.icon = gmgnInfo.logo;
 
           const tagStats = gmgnInfo?.wallet_tags_stat || {};
           const candidateSmartCount = Number(tagStats.smart_wallets || tagStats.smart_degen || 0);

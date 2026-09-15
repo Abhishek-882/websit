@@ -25,6 +25,44 @@ export default function App() {
   const isFirstLoadRef = useRef(true);
   const toastTimerRef = useRef(null);
 
+  // PWA Home Screen Installation State
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  useEffect(() => {
+    const handleBeforeInstall = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    if (window.matchMedia('(display-mode: standalone)').matches) {
+      setIsInstalled(true);
+    }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstalled(true);
+    }
+    setInstallPrompt(null);
+  };
+
   // Initialize service worker on app startup for phone notifications
   useEffect(() => {
     initServiceWorker().catch(() => {});
@@ -44,7 +82,7 @@ export default function App() {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // 1. Fetch Tokens Loop (every 10 seconds for selected chain)
+  // 1. Fetch Tokens Loop (every 3.5 seconds ultra-low latency)
   // ─────────────────────────────────────────────────────────────
   const fetchTokens = async () => {
     try {
@@ -67,7 +105,7 @@ export default function App() {
 
   useEffect(() => {
     fetchTokens();
-    const interval = setInterval(fetchTokens, 10000); // 10s polling
+    const interval = setInterval(fetchTokens, 3500); // 3.5s ultra-low latency GMGN sync
     return () => {
       clearInterval(interval);
       clearToastTimer();
@@ -225,10 +263,12 @@ export default function App() {
         gmgnPool={gmgnPool}
         selectedChain={selectedChain}
         onSelectChain={handleSelectChain}
+        canInstall={Boolean(installPrompt) && !isInstalled}
+        onInstallApp={handleInstallApp}
       />
 
       {/* 2. Main Content Container (Mobile-friendly max width & padding) */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-5">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-5 pb-16 md:pb-6">
         
         {/* Filter Panel */}
         <FilterBar
@@ -251,14 +291,58 @@ export default function App() {
       </main>
 
       {/* 3. Footer */}
-      <footer className="border-t border-slate-800/60 py-4 px-4 text-center text-xs text-slate-400">
+      <footer className="border-t border-slate-800/60 py-4 px-4 text-center text-xs text-slate-400 mb-12 md:mb-0">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>Meme Cat Discovery Radar • 100% On-Chain &amp; Official GMGN Telemetry</span>
           <span className="font-mono text-[11px] text-slate-400">Ban-Proof Multi-Chain Engine • 2000ms Pacing Shield</span>
         </div>
       </footer>
 
-      {/* 4. Anti-Spam Corner Toast Container */}
+      {/* 4. Mobile Native Floating Bottom Dock (md:hidden) */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#0a0e18]/95 backdrop-blur-lg border-t border-slate-800/90 px-4 py-2 flex items-center justify-around shadow-2xl safe-area-bottom">
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          className="flex flex-col items-center gap-0.5 text-cyan-400 hover:text-white transition-colors"
+        >
+          <span className="text-base">🐾</span>
+          <span className="text-[10px] font-bold">Radar</span>
+        </button>
+        <button
+          onClick={() => {
+            const el = document.querySelector('button[title*="Filter"]') || document.querySelector('main');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="flex flex-col items-center gap-0.5 text-slate-300 hover:text-white transition-colors"
+        >
+          <span className="text-base">🎯</span>
+          <span className="text-[10px] font-bold">Filters ({activeFilterCount})</span>
+        </button>
+        <button
+          onClick={() => handleSelectChain(selectedChain === 'base' ? 'sol' : 'base')}
+          className="flex flex-col items-center gap-0.5 text-slate-300 hover:text-white transition-colors"
+        >
+          <span className="text-base">{selectedChain === 'base' ? '🔵' : '🟣'}</span>
+          <span className="text-[10px] font-bold">{selectedChain === 'base' ? 'Base' : 'Solana'}</span>
+        </button>
+        {Boolean(installPrompt) && !isInstalled && (
+          <button
+            onClick={handleInstallApp}
+            className="flex flex-col items-center gap-0.5 text-rose-400 hover:text-rose-300 font-bold transition-colors animate-pulse"
+          >
+            <span className="text-base">📲</span>
+            <span className="text-[10px] font-black">Install</span>
+          </button>
+        )}
+        <button
+          onClick={handleToggleSound}
+          className="flex flex-col items-center gap-0.5 text-slate-400 hover:text-white transition-colors"
+        >
+          <span className="text-base">{soundMuted ? '🔇' : '🔔'}</span>
+          <span className="text-[10px] font-bold">{soundMuted ? 'Muted' : 'Chime'}</span>
+        </button>
+      </div>
+
+      {/* 5. Anti-Spam Corner Toast Container */}
       <ToastContainer
         activeToast={activeToast}
         onDismiss={handleDismissToast}

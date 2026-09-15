@@ -1,0 +1,27 @@
+﻿{
+  "name": "Meme Cat Radar",
+  "short_name": "Meme Cat",
+  "description": "Real-time Base & Solana Meme Token Scanner with GMGN Telemetry",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "background_color": "#080b12",
+  "theme_color": "#080b12",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/cat-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/cat-icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["finance", "utilities", "crypto"]
+}
