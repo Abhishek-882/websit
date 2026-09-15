@@ -4,19 +4,24 @@ import { devFundService } from './devFund.service.js';
 
 export class TokenAggregatorService {
   constructor() {
-    this.chain = 'sol';
-    this.tokensMap = new Map(); // address -> enrichedToken
+    this.chain = 'base'; // Default network: Base chain
+    this.chainTokens = {
+      base: new Map(),
+      sol: new Map(),
+    };
+    // Compatibility reference
+    this.tokensMap = this.chainTokens.base;
     this.lastScanTimestamp = null;
     this.isScanning = false;
     this.scanIntervalMs = 60 * 1000; // 60 seconds automated background cycle
     this.timer = null;
     this.cacheTtlMs = 10 * 60 * 1000; // 10 minutes cache TTL
-    this.maxGmgnEnrichmentsPerCycle = 6; // At most 6 GMGN calls per 60s cycle (only ~3 req/min)
+    this.maxGmgnEnrichmentsPerCycle = 6; // Rate-safe limit per cycle
   }
 
   startAutoScan() {
     if (this.timer) return;
-    console.log(`[Token Aggregator] 🚀 Autonomous 60s auto-scan initialized (zero user-trigger needed).`);
+    console.log(`[Token Aggregator] 🚀 Autonomous 60s multi-chain auto-scan initialized (Default: Base).`);
     
     // Run initial scan after 1.5s startup delay
     setTimeout(() => {
@@ -37,29 +42,69 @@ export class TokenAggregatorService {
   }
 
   /**
-   * Two-Stage Discovery & Enrichment Cycle:
-   * Stage 1: DexScreener free discovery & pre-filter
-   * Stage 2: GMGN Key Pool targeted enrichment for Smart Money, KOL, Dev Funding (2,000ms delay)
+   * Scan and enrich tokens for a specific chain ('base' or 'sol')
    */
-  async runScanCycle() {
-    if (this.isScanning) {
-      console.log('[Token Aggregator] Scan cycle already running, skipping overlapping tick.');
-      return;
-    }
-
-    this.isScanning = true;
-    const startTime = Date.now();
-    console.log('[Token Aggregator] ⚡ Starting autonomous scan cycle...');
+  async scanChain(chainKey = 'base') {
+    const isBase = chainKey.toLowerCase() === 'base';
+    const chain = isBase ? 'base' : 'sol';
+    const chainMap = this.chainTokens[chain];
 
     try {
-      // ── Stage 1: DexScreener Discovery & Pre-Filter ──
-      const candidates = await dexscreenerService.fetchActiveSolanaPairs();
+      // Stage 1a: Ingest GMGN Official Trending Swaps
+      if (gmgnKeyPool.isAvailable()) {
+        try {
+          const gmgnTrending = await gmgnKeyPool.getTrendingSwaps(chain, '1h');
+          const rankList = gmgnTrending?.data?.rank || gmgnTrending?.data || [];
+          if (Array.isArray(rankList)) {
+            for (const item of rankList) {
+              if (item.address && !chainMap.has(item.address)) {
+                const openTs = item.open_timestamp ? item.open_timestamp * 1000 : null;
+                chainMap.set(item.address, {
+                  address: item.address,
+                  chain: chain,
+                  chainId: isBase ? 'base' : 'solana',
+                  symbol: item.symbol || 'TOKEN',
+                  name: item.name || item.symbol || 'Meme Token',
+                  icon: item.logo || null,
+                  priceUsd: Number(item.price || 0),
+                  marketCap: Number(item.market_cap || item.fdv || 0),
+                  liquidityUsd: Number(item.liquidity || 0),
+                  volume24h: Number(item.volume24h || item.volume || 0),
+                  volume1h: Number(item.volume1h || 0),
+                  pairCreatedAt: openTs,
+                  ageMs: openTs ? (Date.now() - openTs) : null,
+                  ageFormatted: openTs ? dexscreenerService.formatTimeAgo(openTs) : '--',
+                  dexId: isBase ? 'uniswap' : 'raydium',
+                  url: isBase ? `https://dexscreener.com/base/${item.address}` : `https://dexscreener.com/solana/${item.address}`,
+                  gmgnUrl: `https://gmgn.ai/${chain}/token/${item.address}`,
+                  smartMoneyCount: null,
+                  smartMoneySoldCount: 0,
+                  smartHolders: [],
+                  smartSold: [],
+                  kolCount: null,
+                  kolSoldCount: 0,
+                  kolHolders: [],
+                  kolSold: [],
+                  devFund: null,
+                  enrichedAt: 0,
+                });
+              }
+            }
+          }
+        } catch (trendErr) {
+          console.warn(`[Token Aggregator] GMGN trending notice for ${chain}:`, trendErr.message);
+        }
+      }
 
-      // Merge raw DexScreener market data into tokens map
+      // Stage 1b: DexScreener Discovery & Pre-Filter
+      const candidates = await dexscreenerService.fetchActivePairs(chain);
+
       for (const cand of candidates) {
-        if (!this.tokensMap.has(cand.address)) {
-          this.tokensMap.set(cand.address, {
+        if (!chainMap.has(cand.address)) {
+          chainMap.set(cand.address, {
             address: cand.address,
+            chain: chain,
+            chainId: isBase ? 'base' : 'solana',
             symbol: cand.symbol,
             name: cand.name,
             icon: cand.icon,
@@ -73,7 +118,8 @@ export class TokenAggregatorService {
             ageFormatted: cand.ageFormatted,
             dexId: cand.dexId,
             url: cand.url,
-            // GMGN Telemetry fields (initially null until enriched)
+            gmgnUrl: `https://gmgn.ai/${chain}/token/${cand.address}`,
+            // GMGN Telemetry fields
             smartMoneyCount: null,
             smartMoneySoldCount: 0,
             smartHolders: [],
@@ -86,46 +132,42 @@ export class TokenAggregatorService {
             enrichedAt: 0,
           });
         } else {
-          // Update live market metrics from DexScreener
-          const t = this.tokensMap.get(cand.address);
+          const t = chainMap.get(cand.address);
           t.priceUsd = cand.priceUsd;
           t.marketCap = cand.marketCap;
           t.liquidityUsd = cand.liquidityUsd;
           t.volume24h = cand.volume24h;
           t.volume1h = cand.volume1h;
           if (!t.icon && cand.icon) t.icon = cand.icon;
-          // Preserve earliest launch timestamp
           if (cand.pairCreatedAt && (!t.pairCreatedAt || cand.pairCreatedAt < t.pairCreatedAt)) {
             t.pairCreatedAt = cand.pairCreatedAt;
           }
           t.ageMs = t.pairCreatedAt ? (Date.now() - t.pairCreatedAt) : cand.ageMs;
           t.ageFormatted = dexscreenerService.formatTimeAgo(t.pairCreatedAt || cand.pairCreatedAt);
           t.url = cand.url || t.url;
+          t.gmgnUrl = `https://gmgn.ai/${chain}/token/${cand.address}`;
         }
       }
 
-      // ── Stage 2: Targeted GMGN & Dev Fund Enrichment ──
-      // Pick tokens that need enrichment (enrichedAt is 0 or older than cache TTL)
+      // Stage 2: Targeted GMGN & Dev Fund Enrichment
       const now = Date.now();
-      const needEnrichment = Array.from(this.tokensMap.values())
+      const needEnrichment = Array.from(chainMap.values())
         .filter(t => (now - (t.enrichedAt || 0)) > this.cacheTtlMs)
         .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0))
         .slice(0, this.maxGmgnEnrichmentsPerCycle);
 
-      console.log(`[Token Aggregator] Enriching ${needEnrichment.length} tokens with GMGN Smart/KOL/Dev telemetry...`);
+      console.log(`[Token Aggregator] Enriching ${needEnrichment.length} ${chain.toUpperCase()} tokens with GMGN telemetry...`);
 
       for (const token of needEnrichment) {
         if (!gmgnKeyPool.isAvailable()) {
-          console.warn(`[Token Aggregator] GMGN Key Pool cooldown active (${gmgnKeyPool.getCooldownRemainingSec()}s remaining). Skipping remaining tokens this cycle.`);
+          console.warn(`[Token Aggregator] GMGN Key Pool cooldown active. Skipping remaining ${chain.toUpperCase()} tokens.`);
           break;
         }
 
         try {
-          // Query GMGN single token info endpoint (dev metadata and timestamps)
-          const gmgnRes = await gmgnKeyPool.getTokenInfo(this.chain, token.address);
+          const gmgnRes = await gmgnKeyPool.getTokenInfo(chain, token.address);
           const gmgnInfo = gmgnRes?.data || gmgnRes || {};
 
-          // ── Tier 1 Fast-Gating via Token Info (Weight 1) ──
           const tagStats = gmgnInfo?.wallet_tags_stat || {};
           const candidateSmartCount = Number(tagStats.smart_wallets || tagStats.smart_degen || 0);
           const candidateKolCount = Number(tagStats.renowned_wallets || tagStats.kol_wallets || 0);
@@ -135,37 +177,33 @@ export class TokenAggregatorService {
           let activeSmartHolders = [];
           let soldSmartHolders = [];
 
-          // ── Tier 2 Tagged KOL Deep Verification (tag: renowned) ──
           if (candidateKolCount > 0) {
             try {
-              const kolRes = await gmgnKeyPool.getTokenTopTraders(this.chain, token.address, { tag: 'renowned' });
+              const kolRes = await gmgnKeyPool.getTokenTopTraders(chain, token.address, { tag: 'renowned' });
               const kolList = kolRes?.list || kolRes?.data?.list || kolRes?.data || [];
               const parsedKol = this.parseHoldersAndSold(kolList, 0.80);
               activeKolHolders = parsedKol.holding;
               soldKolHolders = parsedKol.sold;
             } catch (kolErr) {
-              console.warn(`[Token Aggregator] KOL inspection notice for ${token.symbol}:`, kolErr.message);
+              console.warn(`[Token Aggregator] KOL notice for ${token.symbol}:`, kolErr.message);
             }
           }
 
-          // ── Tier 2 Tagged Smart Money Deep Verification (tag: smart_degen) ──
           if (candidateSmartCount > 0) {
             try {
-              const smartRes = await gmgnKeyPool.getTokenTopTraders(this.chain, token.address, { tag: 'smart_degen' });
+              const smartRes = await gmgnKeyPool.getTokenTopTraders(chain, token.address, { tag: 'smart_degen' });
               const smartList = smartRes?.list || smartRes?.data?.list || smartRes?.data || [];
               const parsedSmart = this.parseHoldersAndSold(smartList, 0.80);
               activeSmartHolders = parsedSmart.holding;
               soldSmartHolders = parsedSmart.sold;
             } catch (smartErr) {
-              console.warn(`[Token Aggregator] Smart Money inspection notice for ${token.symbol}:`, smartErr.message);
+              console.warn(`[Token Aggregator] Smart Money notice for ${token.symbol}:`, smartErr.message);
             }
           }
 
-          // ── Tier 3 Dev Funding & On-chain SOL balance (0 GMGN Cost) ──
           const devInfo = gmgnInfo?.dev || {};
           const devFund = await devFundService.resolveDevFund(devInfo, token.address);
 
-          // Update token record with verified active holding and sold counts
           token.smartMoneyCount = activeSmartHolders.length;
           token.smartMoneySoldCount = soldSmartHolders.length;
           token.smartHolders = activeSmartHolders;
@@ -179,25 +217,40 @@ export class TokenAggregatorService {
           token.devFund = devFund;
           token.enrichedAt = Date.now();
 
-          // Sync launch age if GMGN has earlier timestamp
-          const gmgnTs = (gmgnInfo.open_timestamp || gmgnInfo.creation_timestamp) ? (gmgnInfo.open_timestamp || gmgnInfo.creation_timestamp) * 1000 : null;
-          if (gmgnTs && (!token.pairCreatedAt || gmgnTs < token.pairCreatedAt)) {
-            token.pairCreatedAt = gmgnTs;
-            token.ageMs = Date.now() - gmgnTs;
-            token.ageFormatted = dexscreenerService.formatTimeAgo(gmgnTs);
-          }
-
-          console.log(`[Token Aggregator] ✓ Enriched $${token.symbol} (${token.address.slice(0, 6)}...): MCap=$${Math.round(token.marketCap).toLocaleString()}, Smart=${activeSmartHolders.length}h/${soldSmartHolders.length}s, KOL=${activeKolHolders.length}h/${soldKolHolders.length}s, Dev=${devFund.fundingDisplay}, SOL=${devFund.devBalanceSol ?? '--'}`);
-        } catch (err) {
-          console.warn(`[Token Aggregator] Enrichment notice for ${token.symbol}:`, err.message);
-          // Mark enriched to prevent hammering failed tokens repeatedly in tight loops
-          token.enrichedAt = Date.now() - (this.cacheTtlMs / 2);
+          console.log(`[Token Aggregator] ✓ Enriched $${token.symbol} (${chain.toUpperCase()}): MCap=$${token.marketCap.toLocaleString()}, Smart=${token.smartMoneyCount}h/${token.smartMoneySoldCount}s, KOL=${token.kolCount}h/${token.kolSoldCount}s, Dev=${devFund?.fundingSource}, Balance=${devFund?.devBalanceSol ?? '--'}`);
+        } catch (enrichErr) {
+          console.warn(`[Token Aggregator] Enrichment error for $${token.symbol}:`, enrichErr.message);
         }
       }
+    } catch (err) {
+      console.warn(`[Token Aggregator] Error scanning ${chainKey}:`, err.message);
+    }
+  }
+
+  /**
+   * Two-Stage Discovery & Enrichment Cycle:
+   * Defaults to Base chain, and also updates Solana.
+   */
+  async runScanCycle() {
+    if (this.isScanning) {
+      console.log('[Token Aggregator] Scan cycle already running, skipping overlapping tick.');
+      return;
+    }
+
+    this.isScanning = true;
+    const startTime = Date.now();
+    console.log('[Token Aggregator] ⚡ Starting autonomous multi-chain scan cycle...');
+
+    try {
+      // 1. Scan Base (default user priority)
+      await this.scanChain('base');
+
+      // 2. Scan Solana
+      await this.scanChain('sol');
 
       this.lastScanTimestamp = Date.now();
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`[Token Aggregator] Autonomous scan cycle completed in ${elapsed}s. Total tracked: ${this.tokensMap.size} tokens.`);
+      console.log(`[Token Aggregator] Scan cycle finished in ${elapsed}s. Tracked Base: ${this.chainTokens.base.size}, Solana: ${this.chainTokens.sol.size}`);
     } catch (cycleErr) {
       console.error('[Token Aggregator] Scan cycle error:', cycleErr.message);
     } finally {
@@ -299,10 +352,14 @@ export class TokenAggregatorService {
     return { activeSmartHolders, activeKolHolders };
   }
 
-  getEnrichedTokens() {
-    const tokens = Array.from(this.tokensMap.values());
+  getEnrichedTokens(chain = 'base') {
+    const isSol = String(chain).toLowerCase().startsWith('sol');
+    const targetChain = isSol ? 'sol' : 'base';
+    const map = this.chainTokens ? (this.chainTokens[targetChain] || this.chainTokens.base) : this.tokensMap;
+    const tokens = Array.from(map.values());
     return {
       tokens,
+      chain: targetChain,
       lastScanTimestamp: this.lastScanTimestamp,
       totalCount: tokens.length,
       isScanning: this.isScanning,

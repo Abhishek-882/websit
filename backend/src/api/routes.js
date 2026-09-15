@@ -10,9 +10,11 @@ const router = Router();
  */
 router.get('/tokens', (req, res) => {
   try {
-    const data = tokenAggregatorService.getEnrichedTokens();
+    const chainParam = req.query.chain || 'base';
+    const data = tokenAggregatorService.getEnrichedTokens(chainParam);
     res.json({
       success: true,
+      chain: data.chain || 'base',
       tokens: data.tokens,
       lastScanTimestamp: data.lastScanTimestamp,
       totalCount: data.totalCount,

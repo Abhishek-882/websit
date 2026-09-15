@@ -213,6 +213,15 @@ export class GMGNKeyPool {
     );
   }
 
+  /**
+   * Fetches trending meme coins by swap volume from GMGN
+   */
+  async getTrendingSwaps(chain, timeframe = '1h') {
+    return this.execute(`getTrendingSwaps(${chain}, ${timeframe})`, client =>
+      client.getTrendingSwaps(chain, timeframe)
+    );
+  }
+
   getHealth() {
     const now = Date.now();
     return {

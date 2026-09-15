@@ -63,8 +63,9 @@ export class DevFundService {
   }
 
   /**
-   * Fetch live on-chain SOL balance for developer address.
-   * Uses standard JSON-RPC HTTP POST to eliminate deprecated websocket overhead and url.parse warnings.
+   * Fetch live on-chain balance for developer address.
+   * If devAddress starts with '0x', queries Base JSON-RPC (eth_getBalance).
+   * Otherwise queries Solana JSON-RPC (getBalance).
    */
   async getDevSolBalance(devAddress) {
     if (!devAddress) return null;
@@ -74,7 +75,37 @@ export class DevFundService {
       return cached.devBalanceSol;
     }
 
-    // 1. Direct standard JSON-RPC HTTP POST (clean, 0 websocket overhead, 0 url.parse deprecation)
+    // 1. EVM / Base Chain Address (0x...)
+    if (devAddress.startsWith('0x')) {
+      try {
+        const resp = await fetch('https://mainnet.base.org', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'eth_getBalance',
+            params: [devAddress, 'latest'],
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data?.result) {
+            const wei = BigInt(data.result);
+            const eth = Number(wei) / 1e18;
+            const formatted = Math.round(eth * 1000) / 1000;
+            this.devCache.set(devAddress, { devBalanceSol: formatted, cachedAt: Date.now() });
+            return formatted;
+          }
+        }
+      } catch (evmErr) {
+        // Fallback
+      }
+      return null;
+    }
+
+    // 2. Solana Address (base58) - Direct JSON-RPC HTTP POST
     try {
       const resp = await fetch(RPC_URL, {
         method: 'POST',
@@ -101,9 +132,9 @@ export class DevFundService {
       // Primary HTTP RPC fallback
     }
 
-    // 2. Secondary fallback via Connection
+    // 3. Secondary fallback via Connection
     try {
-      if (this.connection) {
+      if (this.connection && !devAddress.startsWith('0x')) {
         const pubkey = new PublicKey(devAddress);
         const lamports = await this.connection.getBalance(pubkey);
         const sol = Math.round((lamports / 1e9) * 100) / 100;
@@ -111,7 +142,6 @@ export class DevFundService {
         return sol;
       }
     } catch (err) {
-      // Non-fatal on-chain error
       return null;
     }
     return null;

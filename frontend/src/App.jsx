@@ -4,8 +4,10 @@ import FilterBar, { DEFAULT_FILTERS, isTokenMatchingFilters } from './components
 import TokenTable from './components/TokenTable';
 import ToastContainer from './components/ToastContainer';
 import { soundFX } from './engine/soundFX';
+import { showTokenNotification, initServiceWorker } from './engine/phoneNotification';
 
 export default function App() {
+  const [selectedChain, setSelectedChain] = useState('base'); // User directive: default only based tokens
   const [tokens, setTokens] = useState([]);
   const [lastScanTimestamp, setLastScanTimestamp] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -23,6 +25,11 @@ export default function App() {
   const isFirstLoadRef = useRef(true);
   const toastTimerRef = useRef(null);
 
+  // Initialize service worker on app startup for phone notifications
+  useEffect(() => {
+    initServiceWorker().catch(() => {});
+  }, []);
+
   const clearToastTimer = () => {
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
@@ -37,11 +44,11 @@ export default function App() {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // 1. Fetch Tokens Loop (every 10 seconds)
+  // 1. Fetch Tokens Loop (every 10 seconds for selected chain)
   // ─────────────────────────────────────────────────────────────
   const fetchTokens = async () => {
     try {
-      const res = await fetch('/api/tokens');
+      const res = await fetch(`/api/tokens?chain=${selectedChain}`);
       if (!res.ok) return;
       const data = await res.json();
       if (data.success && Array.isArray(data.tokens)) {
@@ -65,7 +72,16 @@ export default function App() {
       clearInterval(interval);
       clearToastTimer();
     };
-  }, []);
+  }, [selectedChain]);
+
+  // When switching chain, reset first load seed
+  const handleSelectChain = (newChain) => {
+    if (newChain !== selectedChain) {
+      setSelectedChain(newChain);
+      setTokens([]);
+      isFirstLoadRef.current = true;
+    }
+  };
 
   // ─────────────────────────────────────────────────────────────
   // 2. Client-Side Instant In-Memory Filter Engine (<1ms, 0 API)
@@ -74,7 +90,6 @@ export default function App() {
     const sellThresholdDecimal = (filters.sellThreshold ?? 80) / 100;
 
     return tokens.map(token => {
-      // Recompute active vs sold dynamically for each token based on the user's sellThreshold!
       const allKols = [...(token.kolHolders || []), ...(token.kolSold || [])];
       const kolMap = new Map();
       for (const k of allKols) {
@@ -114,7 +129,7 @@ export default function App() {
     if (filters.agePreset !== 'all' || filters.ageMaxHours > 0) count++;
     if (filters.smartPreset !== 'all' || filters.smartMinSlider > 0) count++;
     if (filters.kolPreset !== 'all' || filters.kolMinSlider > 0) count++;
-    if (filters.devPreset !== 'all') count++;
+    if (filters.devPreset !== 'all' || (filters.devMinMoneySlider ?? 0) > 0) count++;
     return count;
   }, [filters]);
 
@@ -124,7 +139,7 @@ export default function App() {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // 3. Anti-Spam Filter Match Toast Notification Engine
+  // 3. Anti-Spam Filter Match Toast & Phone Notification Engine
   // ─────────────────────────────────────────────────────────────
   const handleIncomingTokens = (freshTokens) => {
     if (!Array.isArray(freshTokens) || freshTokens.length === 0) return;
@@ -133,7 +148,6 @@ export default function App() {
     const DEDUP_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes per token
 
     if (isFirstLoadRef.current) {
-      // Seed known addresses on cold start without flooding notifications
       freshTokens.forEach(t => {
         knownAddressSetRef.current.add(t.address);
         alertedHistoryRef.current.set(t.address, now);
@@ -143,19 +157,22 @@ export default function App() {
     }
 
     for (const t of freshTokens) {
-      const isNewArrival = !knownAddressSetRef.current.has(t.address);
       knownAddressSetRef.current.add(t.address);
 
-      // Check if newly discovered or matching active filters
       if (isTokenMatchingFilters(t, filters)) {
         const lastAlerted = alertedHistoryRef.current.get(t.address) || 0;
         if (now - lastAlerted > DEDUP_COOLDOWN_MS) {
           alertedHistoryRef.current.set(t.address, now);
+
+          // 1. In-app toast popup
           toastQueueRef.current.push({
             token: t,
             title: `New Match: $${t.symbol}`,
             message: `MCap: $${Math.round(t.marketCap || 0).toLocaleString()} | Smart: ${t.smartMoneyCount ?? 0} holding`,
           });
+
+          // 2. User directive: Phone Chrome notification popup
+          showTokenNotification(t, `🐾 Meme Cat Alert: $${t.symbol}`).catch(() => {});
         }
       }
     }
@@ -174,11 +191,9 @@ export default function App() {
     soundFX.playAlertChime();
 
     clearToastTimer();
-    // 8-second auto-dismiss with queue progression
     toastTimerRef.current = setTimeout(() => {
       setActiveToast(null);
       isDisplayingToastRef.current = false;
-      // Process next item in queue after brief delay
       toastTimerRef.current = setTimeout(() => processToastQueue(), 500);
     }, 8000);
   };
@@ -199,7 +214,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#080b12] text-slate-100 flex flex-col font-sans">
       
-      {/* 1. Header with Live Ticker & Mute Toggle */}
+      {/* 1. Header with Network Selector (Base default), Live Ticker, Phone Alerts & Mute */}
       <Header
         lastScanTimestamp={lastScanTimestamp}
         isScanning={isScanning}
@@ -208,10 +223,12 @@ export default function App() {
         soundMuted={soundMuted}
         onToggleSound={handleToggleSound}
         gmgnPool={gmgnPool}
+        selectedChain={selectedChain}
+        onSelectChain={handleSelectChain}
       />
 
-      {/* 2. Main Content Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 lg:px-8 py-6 space-y-5">
+      {/* 2. Main Content Container (Mobile-friendly max width & padding) */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-5">
         
         {/* Filter Panel */}
         <FilterBar
@@ -221,13 +238,14 @@ export default function App() {
           activeFilterCount={activeFilterCount}
         />
 
-        {/* 5-Metric Token Table */}
+        {/* 5-Metric Token Table & Mobile Cards */}
         <TokenTable
           tokens={filteredTokens}
           isScanning={isScanning}
           totalTokensCount={tokens.length}
           highlightedAddress={highlightedAddress}
           onResetFilters={handleResetFilters}
+          selectedChain={selectedChain}
         />
 
       </main>
@@ -235,8 +253,8 @@ export default function App() {
       {/* 3. Footer */}
       <footer className="border-t border-slate-800/60 py-4 px-4 text-center text-xs text-slate-400">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>Websit Solana Discovery Radar • 100% On-Chain &amp; Official GMGN Telemetry</span>
-          <span className="font-mono text-[11px] text-slate-400">Ban-Proof Key Pool Engine • 2000ms Mutex Delay</span>
+          <span>Meme Cat Discovery Radar • 100% On-Chain &amp; Official GMGN Telemetry</span>
+          <span className="font-mono text-[11px] text-slate-400">Ban-Proof Multi-Chain Engine • 2000ms Pacing Shield</span>
         </div>
       </footer>
 

@@ -23,6 +23,7 @@ export const DEFAULT_FILTERS = {
   kolPreset: 'all', // 'all', '>=1', '>=2'
   kolMinSlider: 0, // 0 = all
   devPreset: 'all', // 'all', 'cex', 'holding', 'not_dumped'
+  devMinMoneySlider: 0, // 0 = all
 };
 
 /**
@@ -81,6 +82,10 @@ export function isTokenMatchingFilters(token, filters) {
   if (filters.devPreset === 'cex' && !dev.isCexFunded) return false;
   if (filters.devPreset === 'holding' && (dev.devStatus !== 'Holding' || dev.isDumped)) return false;
   if (filters.devPreset === 'not_dumped' && dev.isDumped) return false;
+  if (filters.devMinMoneySlider > 0) {
+    const devBal = Number(dev.devBalanceSol ?? dev.fundingAmountSol ?? 0);
+    if (devBal < filters.devMinMoneySlider) return false;
+  }
 
   return true;
 }

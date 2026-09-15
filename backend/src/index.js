@@ -36,7 +36,7 @@ app.get('*', (req, res) => {
     if (err) {
       res.status(200).json({
         status: 'running',
-        message: 'Websit Backend API active. Build frontend to view dashboard.',
+        message: 'Meme Cat Backend API active. Build frontend to view dashboard.',
         endpoints: ['/api/tokens', '/api/health'],
       });
     }
@@ -47,7 +47,7 @@ app.get('*', (req, res) => {
 tokenAggregatorService.startAutoScan();
 
 app.listen(PORT, () => {
-  console.log(`[Websit Server] 🚀 Listening on http://localhost:${PORT}`);
+  console.log(`[Meme Cat Server] 🐱 🚀 Listening on http://localhost:${PORT}`);
 });
 
 export default app;
