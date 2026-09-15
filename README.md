@@ -1,49 +1,49 @@
-# websit — Ban-Proof Lightweight Solana Token Discovery Platform
+# Websit — Ban-Proof Lightweight Solana Token Discovery Platform
 
-A lightweight, ban-proof token radar focused on the **5 core metrics**:
-1. **Market Cap**: Real-time valuation with flexible range filters.
-2. **Age**: Token launch age (`15m`, `1h 30m`, `12h`) with instant presets.
-3. **Smart Money**: GMGN official smart degen count and smart wallet badges.
-4. **KOL**: GMGN official renowned KOL count and influencer tags.
-5. **Fund in Dev**: Dev wallet SOL balance, CEX funding origin (`Binance`, `FixedFloat`, `Bybit`, etc.), and dev sold/holding status.
+A lightweight, ban-proof token radar focused on **5 core metrics**:
+1. **Market Cap**: Real-time valuation from DexScreener free tier with instant range filters & presets.
+2. **Age**: Token pair launch age (`12m`, `1h 30m`, `1d`) with instant presets.
+3. **Smart Money**: Official GMGN smart wallet count — **STRICTLY active holders holding ≥ $50 USD value** (excludes sold out / dust).
+4. **KOL**: Official GMGN renowned influencer count — **STRICTLY active holders holding ≥ $50 USD value** (excludes dumped).
+5. **Fund in Dev**: Dev wallet live SOL balance via Solana RPC, CEX funding origin (`Binance`, `Bybit`, `FixedFloat`, etc.), and dev status (`Holding`, `Dumped 100%`, `CTO`).
 
 ---
 
 ## 🛡️ Anti-Ban Architecture
-- **DexScreener-First Discovery**: Zero API key required, 300 req/min for candidate discovery and prices.
-- **Strict GMGN Key Pool**: 5 API keys with Round-Robin arbitration, serialized **2,000ms inter-request pacing**, and **+15s clock drift safety buffer**.
-- **Aggressive Caching**: 5–10 minute in-memory caching ensures that all user filter tweaks execute in `<1ms` with **0 external API calls**.
-- **Relaxed Scan Cadence**: 60s–90s scan interval, enriching at most 5–10 tokens per cycle (~2–3 GMGN calls/min total).
-- **0% 3D Bloat**: Stripped of heavy 3D canvases, Three.js shaders, and complex bytecode dumps for instant page loads.
+- **Stage 1 (DexScreener Discovery & Pre-Filter)**: Queries DexScreener (300 req/min, 0 API key required) and filters out dead/low-liquidity (&lt; $1k) pairs upfront.
+- **Stage 2 (GMGN Key Pool Enrichment)**: 5 API keys with Round-Robin arbitration, serialized **2,000ms inter-request delay**, and **+15s clock drift shield** (~2–4 tokens enriched per cycle).
+- **Autonomous 60s Scanning**: Fully hands-free background scanner; no manual button that could risk IP bans.
+- **100% In-Memory Client Filtering**: Instant panel filters (&lt;1ms) with 0 API calls on filter changes.
+- **Anti-Spam Toast Alerts**: Corner popup when a newly scanned token matches active user filters (max 1 popup per 8s, 30m deduplication cooldown per token, with audio chime & mute toggle).
+- **Live Ticker**: Header displays real-time `● Live | Updated Xs ago` ticking continuously every second.
+- **0% 3D Bloat**: Fast DOM rendering without heavy WebGL shaders or memory bloat.
 
 ---
 
 ## 🚀 Quickstart
 
-### Prerequisites
-- Node.js >= 18
-- npm
-
-### 1. Install Dependencies
+### 1. Build and Run from Root
 ```bash
-# Install backend dependencies
-cd backend
-npm install
+# Install dependencies
+npm install --prefix backend
+npm install --prefix frontend
 
-# Install frontend dependencies
-cd ../frontend
-npm install
-```
-
-### 2. Build Frontend
-```bash
-cd frontend
+# Build frontend and deploy to backend/public
 npm run build
-```
 
-### 3. Run Production Server
-```bash
-cd ../backend
+# Run unit and anti-ban tests
+npm test
+
+# Start production server
 npm start
 ```
-The platform will be live at `http://localhost:3001`.
+
+Access the dashboard at `http://localhost:3001`.
+
+---
+
+## 🧪 Testing
+Run the comprehensive test suite verifying pacing, clock drift buffer, pre-filter, dev classification, and strict holder filtering:
+```bash
+npm test
+```
