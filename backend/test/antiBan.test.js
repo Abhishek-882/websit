@@ -259,8 +259,8 @@ await runTest('Tier 1 Fast-Gating Screen detects candidate counts and avoids Wei
 // 6. In-Memory 5-Metric Unified Client Filter Engine Tests
 // ─────────────────────────────────────────────────────────────
 await runTest('In-Memory Filter Engine evaluates all 5 dimensions without API calls (<1ms)', async () => {
-  // Import unified filter function from FilterBar
-  const { isTokenMatchingFilters } = await import('../../frontend/src/components/FilterBar.jsx');
+  // Import unified filter function from filterEngine
+  const { isTokenMatchingFilters } = await import('../../frontend/src/engine/filterEngine.js');
 
   const testToken = {
     symbol: 'SOLRADAR',
