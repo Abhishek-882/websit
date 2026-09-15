@@ -21,6 +21,14 @@
     "express": "^4.21.0",
     "gmgn-cli": "^1.6.2"
   },
+  "overrides": {
+    "rpc-websockets": "9.3.9",
+    "uuid": "^11.1.0"
+  },
+  "resolutions": {
+    "rpc-websockets": "9.3.9",
+    "uuid": "^11.1.0"
+  },
   "keywords": [
     "solana",
     "gmgn",

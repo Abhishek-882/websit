@@ -63,7 +63,8 @@ export class DevFundService {
   }
 
   /**
-   * Fetch live on-chain SOL balance for developer address
+   * Fetch live on-chain SOL balance for developer address.
+   * Uses standard JSON-RPC HTTP POST to eliminate deprecated websocket overhead and url.parse warnings.
    */
   async getDevSolBalance(devAddress) {
     if (!devAddress) return null;
@@ -73,16 +74,47 @@ export class DevFundService {
       return cached.devBalanceSol;
     }
 
+    // 1. Direct standard JSON-RPC HTTP POST (clean, 0 websocket overhead, 0 url.parse deprecation)
     try {
-      const pubkey = new PublicKey(devAddress);
-      const lamports = await this.connection.getBalance(pubkey);
-      const sol = Math.round((lamports / 1e9) * 100) / 100;
-      this.devCache.set(devAddress, { devBalanceSol: sol, cachedAt: Date.now() });
-      return sol;
+      const resp = await fetch(RPC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getBalance',
+          params: [devAddress, { commitment: 'confirmed' }],
+        }),
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const lamports = data?.result?.value;
+        if (typeof lamports === 'number') {
+          const sol = Math.round((lamports / 1e9) * 100) / 100;
+          this.devCache.set(devAddress, { devBalanceSol: sol, cachedAt: Date.now() });
+          return sol;
+        }
+      }
+    } catch (rpcErr) {
+      // Primary HTTP RPC fallback
+    }
+
+    // 2. Secondary fallback via Connection
+    try {
+      if (this.connection) {
+        const pubkey = new PublicKey(devAddress);
+        const lamports = await this.connection.getBalance(pubkey);
+        const sol = Math.round((lamports / 1e9) * 100) / 100;
+        this.devCache.set(devAddress, { devBalanceSol: sol, cachedAt: Date.now() });
+        return sol;
+      }
     } catch (err) {
       // Non-fatal on-chain error
       return null;
     }
+    return null;
   }
 
   /**
