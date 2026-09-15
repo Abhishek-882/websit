@@ -1,0 +1,19 @@
+{
+  "name": "websit",
+  "version": "1.0.0",
+  "description": "Ban-proof lightweight Solana token discovery platform with 5 core metrics",
+  "main": "backend/src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node backend/src/index.js",
+    "dev:backend": "node --watch backend/src/index.js",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build:frontend": "npm run build --prefix frontend && npm run deploy:frontend",
+    "deploy:frontend": "powershell -Command \"Copy-Item -Path frontend/dist/* -Destination backend/public -Recurse -Force\"",
+    "build": "npm run build:frontend",
+    "test": "npm test --prefix backend"
+  },
+  "keywords": ["solana", "gmgn", "dexscreener", "smart-money", "kol"],
+  "author": "Abhishek",
+  "license": "MIT"
+}

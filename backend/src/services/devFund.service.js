@@ -1,0 +1,124 @@
+import { Connection, PublicKey } from '@solana/web3.js';
+
+const RPC_URL = process.env.SOLANA_RPC_URL || 'https://solana-rpc.publicnode.com';
+
+const KNOWN_CEX_SIGNATURES = [
+  { match: 'binance', name: 'Binance' },
+  { match: 'bybit', name: 'Bybit' },
+  { match: 'coinbase', name: 'Coinbase' },
+  { match: 'fixedfloat', name: 'FixedFloat' },
+  { match: 'changenow', name: 'ChangeNOW' },
+  { match: 'okx', name: 'OKX' },
+  { match: 'gate', name: 'Gate.io' },
+  { match: 'kucoin', name: 'KuCoin' },
+  { match: 'mexc', name: 'MEXC' },
+  { match: 'kraken', name: 'Kraken' },
+  { match: 'htx', name: 'HTX' },
+];
+
+export class DevFundService {
+  constructor() {
+    this.connection = new Connection(RPC_URL, 'confirmed');
+    this.devCache = new Map(); // devAddress -> { devBalanceSol, cachedAt }
+    this.cacheTtlMs = 10 * 60 * 1000; // 10 minutes
+  }
+
+  /**
+   * Parse human-readable CEX or funding wallet label
+   */
+  classifyFundingSource(rawSource, rawAmount) {
+    if (!rawSource) return { source: 'Unknown', isCex: false, amountSol: null };
+
+    const lower = String(rawSource).toLowerCase();
+    const matchedCex = KNOWN_CEX_SIGNATURES.find(c => lower.includes(c.match));
+
+    let parsedAmount = null;
+    if (rawAmount) {
+      const num = parseFloat(rawAmount);
+      if (!isNaN(num) && num > 0) parsedAmount = Math.round(num * 100) / 100;
+    }
+
+    if (matchedCex) {
+      return {
+        source: matchedCex.name,
+        isCex: true,
+        amountSol: parsedAmount,
+      };
+    }
+
+    // If it's a Solana address, truncate it
+    if (rawSource.length >= 32) {
+      return {
+        source: `${rawSource.slice(0, 4)}...${rawSource.slice(-4)}`,
+        isCex: false,
+        amountSol: parsedAmount,
+      };
+    }
+
+    return {
+      source: rawSource,
+      isCex: false,
+      amountSol: parsedAmount,
+    };
+  }
+
+  /**
+   * Fetch live on-chain SOL balance for developer address
+   */
+  async getDevSolBalance(devAddress) {
+    if (!devAddress) return null;
+
+    const cached = this.devCache.get(devAddress);
+    if (cached && (Date.now() - cached.cachedAt) < this.cacheTtlMs) {
+      return cached.devBalanceSol;
+    }
+
+    try {
+      const pubkey = new PublicKey(devAddress);
+      const lamports = await this.connection.getBalance(pubkey);
+      const sol = Math.round((lamports / 1e9) * 100) / 100;
+      this.devCache.set(devAddress, { devBalanceSol: sol, cachedAt: Date.now() });
+      return sol;
+    } catch (err) {
+      // Non-fatal on-chain error
+      return null;
+    }
+  }
+
+  /**
+   * Enrich dev funding & net-worth data from GMGN dev telemetry + on-chain balance
+   */
+  async resolveDevFund(gmgnDevInfo, coinDevAddress = null) {
+    const devAddress = gmgnDevInfo?.creator_address || gmgnDevInfo?.address || coinDevAddress || null;
+    const rawFundFrom = gmgnDevInfo?.fund_from || null;
+    const rawFundAmount = gmgnDevInfo?.fund_amount || null;
+
+    const funding = this.classifyFundingSource(rawFundFrom, rawFundAmount);
+    const solBalance = devAddress ? await this.getDevSolBalance(devAddress) : null;
+
+    const creatorStatus = String(gmgnDevInfo?.creator_token_status || '').toLowerCase();
+    const isDumped = creatorStatus.includes('close') || creatorStatus === 'creator_close';
+    const isCto = Boolean(gmgnDevInfo?.cto_flag);
+
+    let statusLabel = 'Holding';
+    if (isCto) {
+      statusLabel = 'CTO';
+    } else if (isDumped) {
+      statusLabel = 'Dumped 100%';
+    }
+
+    return {
+      devAddress,
+      devBalanceSol: solBalance,
+      fundingSource: funding.source,
+      isCexFunded: funding.isCex,
+      fundingAmountSol: funding.amountSol,
+      fundingDisplay: funding.amountSol ? `${funding.source} (${funding.amountSol} SOL)` : funding.source,
+      devStatus: statusLabel,
+      isDumped,
+      isCto,
+    };
+  }
+}
+
+export const devFundService = new DevFundService();
