@@ -6,14 +6,29 @@
   "type": "module",
   "scripts": {
     "start": "node backend/src/index.js",
+    "postinstall": "npm install --prefix backend && npm install --prefix frontend",
     "dev:backend": "node --watch backend/src/index.js",
     "dev:frontend": "npm run dev --prefix frontend",
     "build:frontend": "npm run build --prefix frontend && npm run deploy:frontend",
-    "deploy:frontend": "powershell -Command \"Copy-Item -Path frontend/dist/* -Destination backend/public -Recurse -Force\"",
+    "deploy:frontend": "node -e \"import fs from 'fs'; fs.cpSync('frontend/dist', 'backend/public', { recursive: true, force: true });\"",
     "build": "npm run build:frontend",
     "test": "npm test --prefix backend"
   },
-  "keywords": ["solana", "gmgn", "dexscreener", "smart-money", "kol"],
+  "dependencies": {
+    "@solana/web3.js": "^1.95.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "gmgn-cli": "^1.6.2"
+  },
+  "keywords": [
+    "solana",
+    "gmgn",
+    "dexscreener",
+    "smart-money",
+    "kol",
+    "render"
+  ],
   "author": "Abhishek",
   "license": "MIT"
 }
