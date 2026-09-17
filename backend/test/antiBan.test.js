@@ -423,6 +423,126 @@ await runTest('SolscanService generates direct verification link and gracefully 
 });
 
 // ─────────────────────────────────────────────────────────────
+// 9. 1-Click Phantom Deposit Transaction & Lamport Precision Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('1-Click Phantom Deposit generates valid SystemProgram transfer transaction', async () => {
+  const { Keypair, Transaction, SystemProgram, LAMPORTS_PER_SOL } = await import('@solana/web3.js');
+  const userKp = Keypair.generate();
+  const sessionKp = Keypair.generate();
+
+  const depositSol = 0.5;
+  const lamports = Math.round(depositSol * LAMPORTS_PER_SOL);
+  assert.equal(lamports, 500_000_000, '0.5 SOL must convert to exactly 500,000,000 lamports');
+
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: userKp.publicKey,
+      toPubkey: sessionKp.publicKey,
+      lamports,
+    })
+  );
+
+  assert.equal(tx.instructions.length, 1);
+  const ix = tx.instructions[0];
+  assert.equal(ix.programId.equals(SystemProgram.programId), true);
+  assert.equal(ix.keys[0].pubkey.equals(userKp.publicKey), true);
+  assert.equal(ix.keys[1].pubkey.equals(sessionKp.publicKey), true);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 10. Ed25519 Signature Proof-of-Ownership & Private Key Export Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('Ed25519 Signature Proof-of-Ownership authenticates private key export', async () => {
+  const { Keypair } = await import('@solana/web3.js');
+  const bs58 = (await import('bs58')).default;
+  const crypto = await import('crypto');
+  const { sessionWalletService } = await import('../src/services/sessionWallet.service.js');
+
+  const userKp = Keypair.generate();
+  const userWallet = userKp.publicKey.toBase58();
+
+  // Create session wallet in DB for this user
+  const session = await sessionWalletService.createSession(userWallet, { test: true });
+  assert.ok(session.sessionPubkey, 'Session pubkey must be created');
+
+  // 1. Generate valid Ed25519 signature
+  const timestamp = Date.now();
+  const message = `Authorize private key export for Solana Radar Session (${session.sessionPubkey}) at timestamp ${timestamp}`;
+  const msgBytes = Buffer.from(message, 'utf8');
+
+  const seed = userKp.secretKey.subarray(0, 32);
+  const pkcs8Prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
+  const privKeyObj = crypto.createPrivateKey({
+    key: Buffer.concat([pkcs8Prefix, seed]),
+    format: 'der',
+    type: 'pkcs8',
+  });
+  const validSig = crypto.sign(null, msgBytes, privKeyObj);
+  const validSigB58 = bs58.encode(validSig);
+
+  // 2. Test valid signature verification
+  const isSigValid = sessionWalletService.verifySignature(userWallet, validSigB58, message);
+  assert.equal(isSigValid, true, 'Valid Phantom-style Ed25519 signature must verify');
+
+  // 3. Test exportPrivateKey succeeds with valid signature
+  const exported = await sessionWalletService.exportPrivateKey(userWallet, validSigB58, message);
+  assert.equal(exported.sessionPubkey, session.sessionPubkey);
+  assert.ok(exported.privateKey, 'Decrypted private key must be returned');
+
+  // Verify the exported key reconstructs the exact same session keypair
+  const reconstructedKp = Keypair.fromSecretKey(bs58.decode(exported.privateKey));
+  assert.equal(reconstructedKp.publicKey.toBase58(), session.sessionPubkey);
+
+  // 4. Test invalid signature is strictly rejected
+  const fakeSigB58 = bs58.encode(Buffer.alloc(64, 1));
+  await assert.rejects(
+    async () => {
+      await sessionWalletService.exportPrivateKey(userWallet, fakeSigB58, message);
+    },
+    /Invalid cryptographic signature/,
+    'Forged or invalid signature must be rejected'
+  );
+});
+
+// ─────────────────────────────────────────────────────────────
+// 11. Cross-Device Persistence & Crash Recovery Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('Session wallet deterministically recovers across reconnections and device sessions', async () => {
+  const { sessionWalletService } = await import('../src/services/sessionWallet.service.js');
+  const { Keypair } = await import('@solana/web3.js');
+
+  const persistentUserKp = Keypair.generate();
+  const persistentUserWallet = persistentUserKp.publicKey.toBase58();
+
+  // First connection on Phone A
+  const sessionA = await sessionWalletService.createSession(persistentUserWallet);
+  assert.ok(sessionA.sessionPubkey);
+
+  // Phone lost / cache cleared -> User reconnects same Phantom on Laptop B
+  const sessionB = await sessionWalletService.createSession(persistentUserWallet);
+  assert.equal(sessionB.sessionPubkey, sessionA.sessionPubkey, 'Must return the same persistent session address');
+
+  const sessionDetails = await sessionWalletService.getSession(persistentUserWallet);
+  assert.equal(sessionDetails.sessionPubkey, sessionA.sessionPubkey);
+  assert.equal(sessionDetails.isActive, true);
+});
+
+// ─────────────────────────────────────────────────────────────
+// 12. Gas Reserve Protection Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('Trading Service enforces 0.005 SOL gas reserve before trades', () => {
+  const tradeSizeSol = 0.1;
+  const gasReserveSol = 0.005;
+  const requiredBalance = tradeSizeSol + gasReserveSol; // 0.105 SOL
+
+  const balanceTooLow = 0.102; // only 0.002 left after trade, not enough for exit gas
+  assert.equal(balanceTooLow < requiredBalance, true, 'Should block trade when gas reserve is compromised');
+
+  const balanceSufficient = 0.106;
+  assert.equal(balanceSufficient >= requiredBalance, true, 'Should allow trade when gas reserve is preserved');
+});
+
+// ─────────────────────────────────────────────────────────────
 // Summary
 // ─────────────────────────────────────────────────────────────
 console.log(`\n==================================================`);

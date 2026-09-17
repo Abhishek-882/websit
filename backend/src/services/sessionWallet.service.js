@@ -1,4 +1,4 @@
-﻿import { Keypair, Connection, PublicKey, Transaction,
+import { Keypair, Connection, PublicKey, Transaction,
          SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import crypto from 'crypto';
@@ -76,6 +76,112 @@ export class SessionWalletService {
   }
 
   /**
+   * Get session wallet details.
+   */
+  async getSession(userWallet) {
+    const session = await getSessionWallet(userWallet);
+    if (!session) return null;
+    const balance = await this.getSessionBalance(userWallet);
+    return {
+      sessionPubkey: session.session_pubkey,
+      balanceSol: balance,
+      isActive: session.is_active,
+      createdAt: session.created_at,
+    };
+  }
+
+  /**
+   * Verify an Ed25519 message signature from a connected Solana wallet (e.g. Phantom).
+   */
+  verifySignature(userWallet, signature, message) {
+    try {
+      const rawPub = bs58.decode(userWallet);
+      if (rawPub.length !== 32) return false;
+
+      const spkiHeader = Buffer.from('302a300506032b6570032100', 'hex');
+      const publicKeyObject = crypto.createPublicKey({
+        key: Buffer.concat([spkiHeader, rawPub]),
+        format: 'der',
+        type: 'spki',
+      });
+
+      let sigBuf;
+      if (typeof signature === 'string') {
+        try {
+          const decoded = bs58.decode(signature);
+          if (decoded.length === 64) {
+            sigBuf = Buffer.from(decoded);
+          }
+        } catch {
+          // not base58
+        }
+        if (!sigBuf) {
+          sigBuf = Buffer.from(signature, 'hex');
+        }
+      } else if (Buffer.isBuffer(signature) || signature instanceof Uint8Array) {
+        sigBuf = Buffer.from(signature);
+      }
+
+      if (!sigBuf || sigBuf.length !== 64) {
+        return false;
+      }
+
+      const msgBuf = Buffer.isBuffer(message) ? message : Buffer.from(message, 'utf8');
+      return crypto.verify(null, msgBuf, publicKeyObject, sigBuf);
+    } catch (e) {
+      console.warn('[SESSION] Signature verification error:', e.message);
+      return false;
+    }
+  }
+
+  /**
+   * Export decrypted private key for user self-custody.
+   * Requires proof of Phantom wallet ownership via cryptographic signature.
+   */
+  async exportPrivateKey(userWallet, signature, message) {
+    if (!this.verifySignature(userWallet, signature, message)) {
+      throw new Error('Invalid cryptographic signature. Ownership of Phantom wallet could not be verified.');
+    }
+
+    const session = await getSessionWallet(userWallet);
+    if (!session) {
+      throw new Error(`No active session wallet found for address ${userWallet}`);
+    }
+
+    const privkey = this._decrypt(session.encrypted_privkey);
+    return {
+      sessionPubkey: session.session_pubkey,
+      privateKey: privkey,
+    };
+  }
+
+  /**
+   * Verify an on-chain deposit transaction and refresh live session balance.
+   */
+  async verifyDeposit(userWallet, txSignature) {
+    const session = await getSessionWallet(userWallet);
+    if (!session) {
+      throw new Error(`No session wallet found for ${userWallet}`);
+    }
+
+    if (txSignature) {
+      try {
+        await this.connection.confirmTransaction(txSignature, 'confirmed');
+      } catch (err) {
+        console.warn(`[SESSION] Confirm transaction notice for ${txSignature.slice(0, 10)}...:`, err.message);
+      }
+    }
+
+    const balanceSol = await this.getSessionBalance(userWallet);
+    return {
+      success: true,
+      sessionPubkey: session.session_pubkey,
+      balanceSol,
+      txSignature,
+    };
+  }
+
+  /**
    * Withdraw all funds: session wallet → user main wallet.
    */
   async withdrawAll(userWallet) {
@@ -96,7 +202,6 @@ export class SessionWalletService {
     );
 
     const sig = await sendAndConfirmTransaction(this.connection, tx, [keypair]);
-    await deactivateSession(userWallet);
     console.log(`[SESSION] Withdrew ${amount / LAMPORTS_PER_SOL} SOL back to ${userWallet.slice(0,8)}...`);
     return { signature: sig, amountSol: amount / LAMPORTS_PER_SOL };
   }

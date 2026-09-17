@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { tokenAggregatorService } from '../services/tokenAggregator.service.js';
 import { gmgnKeyPool } from '../services/gmgnKeyPool.service.js';
 import { sessionWalletService } from '../services/sessionWallet.service.js';
@@ -53,14 +53,54 @@ router.post('/bot/session', async (req, res) => {
 
 /**
  * GET /api/bot/session/:wallet
- * Get session wallet balance and configuration.
+ * Get session wallet pubkey, balance and configuration.
  */
 router.get('/bot/session/:wallet', async (req, res) => {
   try {
     const userWallet = req.params.wallet;
-    const balance = await sessionWalletService.getSessionBalance(userWallet);
+    const session = await sessionWalletService.getSession(userWallet);
     const config = await getBotConfig(userWallet);
-    res.json({ success: true, userWallet, balanceSol: balance, botConfig: config });
+    res.json({
+      success: true,
+      userWallet,
+      sessionPubkey: session ? session.sessionPubkey : null,
+      balanceSol: session ? session.balanceSol : 0,
+      botConfig: config,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/bot/export-key
+ * Secure export of session private key requiring Phantom signature proof-of-ownership.
+ */
+router.post('/bot/export-key', async (req, res) => {
+  try {
+    const { userWallet, signature, message } = req.body;
+    if (!userWallet || !signature || !message) {
+      return res.status(400).json({ error: 'Missing userWallet, signature, or message' });
+    }
+    const result = await sessionWalletService.exportPrivateKey(userWallet, signature, message);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/bot/verify-deposit
+ * Verifies on-chain deposit tx and refreshes live session balance.
+ */
+router.post('/bot/verify-deposit', async (req, res) => {
+  try {
+    const { userWallet, txSignature } = req.body;
+    if (!userWallet) {
+      return res.status(400).json({ error: 'Missing userWallet' });
+    }
+    const result = await sessionWalletService.verifyDeposit(userWallet, txSignature);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

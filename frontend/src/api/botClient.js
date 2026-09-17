@@ -38,6 +38,18 @@ export const botApi = {
 
   getTrades: (wallet) => request(`/trades/${wallet}`),
 
+  exportKey: (userWallet, signature, message) =>
+    request('/export-key', {
+      method: 'POST',
+      body: JSON.stringify({ userWallet, signature, message }),
+    }),
+
+  verifyDeposit: (userWallet, txSignature) =>
+    request('/verify-deposit', {
+      method: 'POST',
+      body: JSON.stringify({ userWallet, txSignature }),
+    }),
+
   manualBuy: (payload) =>
     request('/manual-buy', {
       method: 'POST',

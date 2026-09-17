@@ -1,4 +1,7 @@
 import React, { useState } from 'react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { Transaction, SystemProgram, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import bs58 from 'bs58';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
 import {
@@ -9,6 +12,13 @@ import {
   IconBolt,
   IconTrash,
   IconCheck,
+  IconKey,
+  IconWallet,
+  IconChevronDown,
+  IconChevronUp,
+  IconLock,
+  IconSolana,
+  IconShield,
 } from './Icons';
 
 const FIBONACCI_SPOTS = [
@@ -18,8 +28,12 @@ const FIBONACCI_SPOTS = [
 ];
 
 const QUICK_BUY_AMOUNTS = [0.05, 0.1, 0.2, 0.5, 1.0];
+const DEPOSIT_PRESETS = [0.05, 0.1, 0.2, 0.5, 1.0];
 
 export default function BotControlsModal({ isOpen, onClose }) {
+  const { publicKey, sendTransaction, signMessage } = useWallet();
+  const { connection } = useConnection();
+
   const botConfig = useBotStore(s => s.botConfig);
   const updateBotConfig = useBotStore(s => s.updateBotConfig);
   const addStrategyRule = useBotStore(s => s.addStrategyRule);
@@ -37,6 +51,19 @@ export default function BotControlsModal({ isOpen, onClose }) {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
 
+  // 1-Click Deposit state
+  const [depositAmount, setDepositAmount] = useState(0.1);
+  const [isDepositing, setIsDepositing] = useState(false);
+
+  // Educational Accordion state
+  const [isEducationalOpen, setIsEducationalOpen] = useState(false);
+
+  // Export Private Key state
+  const [isExportingKey, setIsExportingKey] = useState(false);
+  const [exportedKey, setExportedKey] = useState(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [copiedExportKey, setCopiedExportKey] = useState(false);
+
   if (!isOpen) return null;
 
   const handleCreateSession = async () => {
@@ -50,7 +77,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
       const res = await botApi.createSession(connectedWallet, botConfig);
       setSessionPubkey(res.sessionPubkey);
       setSessionBalance(res.balanceSol || 0);
-      setStatusMsg('Session wallet activated! Send SOL to start auto-trading.');
+      setStatusMsg('Session wallet activated! Deposit SOL to start autonomous trading.');
       setTimeout(() => setStatusMsg(null), 4000);
     } catch (err) {
       alert(`Error creating session wallet: ${err.message}`);
@@ -60,21 +87,108 @@ export default function BotControlsModal({ isOpen, onClose }) {
     }
   };
 
+  const handleDepositViaPhantom = async () => {
+    if (!connectedWallet || !publicKey) {
+      alert('Please connect your Phantom or Solflare wallet first.');
+      return;
+    }
+    if (!sessionPubkey) {
+      alert('Session wallet not initialized. Please click Create Session Wallet first.');
+      return;
+    }
+    const solVal = parseFloat(depositAmount);
+    if (!solVal || solVal <= 0) {
+      alert('Please select or enter a valid SOL deposit amount.');
+      return;
+    }
+
+    setIsDepositing(true);
+    setStatusMsg(`Awaiting approval in Phantom to transfer ${solVal} SOL...`);
+    try {
+      const lamports = Math.round(solVal * LAMPORTS_PER_SOL);
+      const tx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey: new PublicKey(sessionPubkey),
+          lamports,
+        })
+      );
+
+      const signature = await sendTransaction(tx, connection);
+      setStatusMsg(`Confirming deposit on Solana Mainnet (${signature.slice(0, 8)}...)...`);
+
+      await connection.confirmTransaction(signature, 'confirmed');
+
+      // Verify on backend and update session balance
+      const res = await botApi.verifyDeposit(connectedWallet, signature);
+      setSessionBalance(res.balanceSol);
+      setStatusMsg(`Successfully deposited ${solVal} SOL! Live balance: ${res.balanceSol.toFixed(4)} SOL`);
+      setTimeout(() => setStatusMsg(null), 5000);
+    } catch (err) {
+      console.error('Deposit error:', err);
+      if (err.message?.includes('User rejected')) {
+        setStatusMsg(null);
+      } else {
+        alert(`Deposit failed: ${err.message}`);
+        setStatusMsg(null);
+      }
+    } finally {
+      setIsDepositing(false);
+    }
+  };
+
+  const handleExportPrivateKey = async () => {
+    if (!connectedWallet || !publicKey) {
+      alert('Please connect your Phantom or Solflare wallet first.');
+      return;
+    }
+    if (!sessionPubkey) {
+      alert('No session wallet exists to export.');
+      return;
+    }
+    if (!signMessage) {
+      alert('Your connected wallet does not support message signing. Please use Phantom or Solflare.');
+      return;
+    }
+
+    setIsExportingKey(true);
+    try {
+      const message = `Authorize private key export for Solana Radar Session (${sessionPubkey}) at timestamp ${Date.now()}`;
+      const messageBytes = new TextEncoder().encode(message);
+
+      const signatureBytes = await signMessage(messageBytes);
+      const signatureB58 = bs58.encode(signatureBytes);
+
+      const res = await botApi.exportKey(connectedWallet, signatureB58, message);
+      setExportedKey(res.privateKey);
+      setShowExportModal(true);
+    } catch (err) {
+      if (err.message?.includes('User rejected') || err.message?.includes('cancelled')) {
+        // user clicked cancel in phantom
+      } else {
+        alert(`Export authentication failed: ${err.message}`);
+      }
+    } finally {
+      setIsExportingKey(false);
+    }
+  };
+
   const handleWithdraw = async () => {
     if (!sessionPubkey || sessionBalance <= 0) {
       alert('No funds in session wallet to withdraw.');
       return;
     }
-    if (!confirm(`Are you sure you want to withdraw ${sessionBalance.toFixed(4)} SOL back to your main wallet (${connectedWallet})?`)) {
+    const shortDest = connectedWallet ? `${connectedWallet.slice(0, 4)}...${connectedWallet.slice(-4)}` : '';
+    if (!confirm(`Emergency Sweep: Withdraw all ${sessionBalance.toFixed(4)} SOL back to your connected Phantom wallet (${shortDest})?`)) {
       return;
     }
     setLoading(true);
-    setStatusMsg('Executing on-chain withdrawal bundle...');
+    setStatusMsg(`Executing withdrawal bundle to ${shortDest}...`);
     try {
       const res = await botApi.withdrawSession(connectedWallet);
       setSessionBalance(0);
-      setStatusMsg(`Withdrawn ${res.amountSol?.toFixed(4) || ''} SOL back to main wallet!`);
-      setTimeout(() => setStatusMsg(null), 4000);
+      setStatusMsg(`Withdrawn ${res.amountSol?.toFixed(4) || ''} SOL back to your Phantom wallet!`);
+      setTimeout(() => setStatusMsg(null), 5000);
     } catch (err) {
       alert(`Withdrawal failed: ${err.message}`);
       setStatusMsg(null);
@@ -106,6 +220,14 @@ export default function BotControlsModal({ isOpen, onClose }) {
     }
   };
 
+  const copyExportedKey = () => {
+    if (exportedKey) {
+      navigator.clipboard.writeText(exportedKey);
+      setCopiedExportKey(true);
+      setTimeout(() => setCopiedExportKey(false), 2000);
+    }
+  };
+
   const rules = botConfig.strategyRules || [];
 
   return (
@@ -113,7 +235,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
       <div className="relative w-full max-w-2xl bg-[#0c101a] border border-slate-700/80 rounded-2xl shadow-2xl p-4 sm:p-6 my-auto text-slate-100 max-h-[92vh] overflow-y-auto font-sans">
         
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+        <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-gradient-to-tr from-cyan-500 to-emerald-500 text-slate-950 font-bold">
               <IconBot className="w-5 h-5 text-slate-950" />
@@ -139,23 +261,39 @@ export default function BotControlsModal({ isOpen, onClose }) {
           </button>
         </div>
 
+        {/* Network & Asset Specification Badges */}
+        <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 mb-3 rounded-lg bg-slate-900/90 border border-slate-800 text-xs font-mono">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded bg-purple-950/80 border border-purple-800/80 text-purple-300 font-bold flex items-center gap-1">
+              <IconSolana className="w-3 h-3 text-purple-300" />
+              <span>Solana Mainnet-Beta</span>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-800/80 text-cyan-300 font-bold">
+              Asset: Native SOL
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-400 hidden sm:inline">
+            Required for DEX pools, gas &amp; Jito MEV tips
+          </span>
+        </div>
+
         {statusMsg && (
-          <div className="mb-4 p-2.5 rounded-lg bg-cyan-950/80 border border-cyan-700 text-cyan-300 text-xs font-mono flex items-center gap-2 animate-pulse">
+          <div className="mb-3 p-2.5 rounded-lg bg-cyan-950/80 border border-cyan-700 text-cyan-300 text-xs font-mono flex items-center gap-2 animate-pulse">
             <IconInfo className="w-4 h-4 shrink-0 text-cyan-400" />
             <span>{statusMsg}</span>
           </div>
         )}
 
-        {/* 1. Delegated Session Wallet Card */}
+        {/* 1. Delegated Session Wallet & 1-Click Phantom Deposit Card */}
         <div className="p-4 rounded-xl bg-[#080c14] border border-slate-800 mb-4 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
                 Autonomous Delegated Session
               </span>
-              <h3 className="text-sm font-bold text-white mt-0.5">Session Keypair</h3>
+              <h3 className="text-sm font-bold text-white mt-0.5">Trading Session Keypair</h3>
               <p className="text-[11px] text-slate-400">
-                Signs swaps automatically in the background with zero wallet popups.
+                Executes orders 24/7 with zero browser popups. Isolated from your main wallet.
               </p>
             </div>
             <div className="text-right">
@@ -167,40 +305,112 @@ export default function BotControlsModal({ isOpen, onClose }) {
           </div>
 
           {sessionPubkey ? (
-            <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-700/80 space-y-2">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                  <span className="text-xs text-slate-400 shrink-0">Deposit:</span>
-                  <span className="font-mono text-xs text-cyan-300 select-all bg-slate-950 px-2 py-1 rounded border border-slate-800 truncate flex-1">
-                    {sessionPubkey}
+            <div className="space-y-3">
+              {/* 1-Click Automatic Deposit via Phantom */}
+              <div className="p-3 rounded-lg bg-slate-900/90 border border-cyan-900/50 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                    <IconWallet className="w-4 h-4 text-cyan-400" />
+                    <span>1-Click Deposit via Phantom</span>
                   </span>
-                  <button
-                    onClick={copySessionKey}
-                    className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold shrink-0 transition-colors"
-                  >
-                    {copied ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-400">
-                        <IconCheck className="w-3 h-3" /> Copied
-                      </span>
-                    ) : (
-                      'Copy'
-                    )}
-                  </button>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Instant on-chain transfer
+                  </span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={handleWithdraw}
-                    disabled={loading || sessionBalance <= 0}
-                    className="px-3 py-1 rounded bg-amber-600/30 border border-amber-600/60 hover:bg-amber-600/50 text-amber-200 text-xs font-bold transition-all disabled:opacity-50"
-                  >
-                    Withdraw All
-                  </button>
+
+                {/* Preset Deposit Buttons */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {DEPOSIT_PRESETS.map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setDepositAmount(amt)}
+                      className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition-all border ${
+                        depositAmount === amt
+                          ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow'
+                          : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      {amt} SOL
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-1 ml-auto">
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0.01"
+                      value={depositAmount}
+                      onChange={(e) => setDepositAmount(parseFloat(e.target.value) || 0.1)}
+                      className="w-16 px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-cyan-300 font-mono font-bold text-right"
+                    />
+                    <span className="text-xs font-mono text-slate-400 font-bold">SOL</span>
+                  </div>
+                </div>
+
+                {/* Primary Deposit Action */}
+                <button
+                  type="button"
+                  onClick={handleDepositViaPhantom}
+                  disabled={isDepositing || !connectedWallet}
+                  className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98] disabled:opacity-50"
+                >
+                  <IconSolana className="w-3.5 h-3.5 text-white" />
+                  <span>
+                    {isDepositing ? 'Confirming in Phantom...' : `Deposit ${depositAmount} SOL via Phantom (1-Click)`}
+                  </span>
+                </button>
+              </div>
+
+              {/* Deposit Address Box & Actions */}
+              <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800 space-y-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                    <span className="text-[11px] text-slate-400 shrink-0">Session Address:</span>
+                    <span className="font-mono text-xs text-cyan-300 select-all bg-slate-950 px-2 py-1 rounded border border-slate-800 truncate flex-1">
+                      {sessionPubkey}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copySessionKey}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold shrink-0 transition-colors"
+                      title="Copy Session Wallet Public Key"
+                    >
+                      {copied ? (
+                        <span className="inline-flex items-center gap-1 text-emerald-400">
+                          <IconCheck className="w-3 h-3" /> Copied
+                        </span>
+                      ) : (
+                        'Copy'
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Export Private Key Button */}
+                    <button
+                      type="button"
+                      onClick={handleExportPrivateKey}
+                      disabled={isExportingKey || !connectedWallet}
+                      className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all flex items-center gap-1"
+                      title="Export private key to import into Phantom wallet"
+                    >
+                      <IconKey className="w-3 h-3 text-amber-400" />
+                      <span>{isExportingKey ? 'Signing...' : 'Backup Key'}</span>
+                    </button>
+
+                    {/* Emergency 1-Click Sweep Button */}
+                    <button
+                      type="button"
+                      onClick={handleWithdraw}
+                      disabled={loading || sessionBalance <= 0}
+                      className="px-3 py-1 rounded bg-rose-950/70 border border-rose-800/80 hover:bg-rose-900/80 text-rose-300 text-xs font-bold transition-all disabled:opacity-50"
+                      title="Sweep all funds back to your connected Phantom wallet"
+                    >
+                      Withdraw All
+                    </button>
+                  </div>
                 </div>
               </div>
-              <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                <IconInfo className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                <span>Send SOL from Phantom or Solflare to this deposit address to fund trades.</span>
-              </p>
             </div>
           ) : (
             <div className="p-4 rounded-lg bg-slate-900/60 border border-dashed border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
@@ -216,7 +426,126 @@ export default function BotControlsModal({ isOpen, onClose }) {
               </button>
             </div>
           )}
+
+          {/* Educational Collapsible Accordion: Why Session Wallet & Recovery */}
+          <div className="pt-1 border-t border-slate-800/80">
+            <button
+              type="button"
+              onClick={() => setIsEducationalOpen(!isEducationalOpen)}
+              className="w-full flex items-center justify-between py-1 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              <span className="flex items-center gap-1.5 font-semibold text-slate-300">
+                <IconShield className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Why do I need a Trading Session Wallet? (Zero-Loss Guarantee)</span>
+              </span>
+              {isEducationalOpen ? (
+                <IconChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <IconChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
+
+            {isEducationalOpen && (
+              <div className="mt-2 p-3 rounded-lg bg-slate-950/80 border border-slate-800 text-[11px] text-slate-300 space-y-2 leading-relaxed">
+                <div>
+                  <span className="font-bold text-white block mb-0.5">1. Zero Popups for Sub-Second Trades</span>
+                  <p className="text-slate-400">
+                    Solana wallets (Phantom/Solflare) require a manual popup approval for every transaction. Smart contracts cannot silently debit your Phantom wallet. To buy dips on Fibonacci retracements and trigger stop-losses while you sleep, an isolated session keypair is used.
+                  </p>
+                </div>
+                <div>
+                  <span className="font-bold text-white block mb-0.5">2. Total Main Wallet Isolation</span>
+                  <p className="text-slate-400">
+                    Your primary Phantom wallet is never exposed. You only deposit what you wish to trade (e.g. 0.1 SOL). You can withdraw 100% of your SOL at any second.
+                  </p>
+                </div>
+                <div>
+                  <span className="font-bold text-white block mb-0.5">3. Zero-Loss Crash &amp; Device Recovery</span>
+                  <p className="text-slate-400">
+                    Your session wallet is permanently mapped to your Phantom wallet login. If your browser crashes, cache is cleared, or you open the app on another phone, reconnecting the same Phantom wallet instantly restores your session and funds.
+                  </p>
+                </div>
+                <div>
+                  <span className="font-bold text-white block mb-0.5">4. 100% Self-Custody (Export to Phantom)</span>
+                  <p className="text-slate-400">
+                    Click &ldquo;Backup Key&rdquo; to export the session private key and import it directly into Phantom (<span className="text-slate-200 font-mono">Settings &rarr; Manage Accounts &rarr; Add Wallet &rarr; Import Private Key</span>). Even if this website went offline, you retain full custody.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Export Private Key Modal */}
+        {showExportModal && exportedKey && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+            <div className="relative w-full max-w-lg bg-[#0c101a] border border-amber-500/70 rounded-2xl shadow-2xl p-5 text-slate-100 space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-amber-950 text-amber-400 border border-amber-800">
+                    <IconKey className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-sm font-bold text-white">Session Keypair Backup (Self-Custody)</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowExportModal(false)}
+                  className="p-1 text-slate-400 hover:text-white"
+                >
+                  <IconClose className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-800 text-rose-300 text-xs flex items-start gap-2">
+                <IconLock className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                <span>
+                  <strong>Confidential</strong>: Never share this private key. Anyone with this key has direct control of the session wallet.
+                </span>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-slate-400 block mb-1 font-mono">Base58 Private Key</label>
+                <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs text-amber-300 break-all select-all flex items-center justify-between gap-2">
+                  <span>{exportedKey}</span>
+                  <button
+                    type="button"
+                    onClick={copyExportedKey}
+                    className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold shrink-0 transition-colors"
+                  >
+                    {copiedExportKey ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-400">
+                        <IconCheck className="w-3 h-3" /> Copied
+                      </span>
+                    ) : (
+                      'Copy'
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 text-xs text-slate-300 space-y-1.5">
+                <span className="font-bold text-white block">How to Import into Phantom:</span>
+                <ol className="list-decimal list-inside space-y-1 text-slate-400 text-[11px]">
+                  <li>Open Phantom &rarr; click top-left menu &rarr; click gear icon (<strong>Settings</strong>).</li>
+                  <li>Tap <strong>Manage Accounts</strong> &rarr; <strong>Add / Connect Wallet</strong>.</li>
+                  <li>Select <strong>Import Private Key</strong>.</li>
+                  <li>Paste this key and name it <strong>&ldquo;Solana Radar Bot&rdquo;</strong>.</li>
+                </ol>
+                <span className="text-[10px] text-emerald-400 block pt-1">
+                  &check; You now have direct control inside Phantom even without this website!
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="w-full py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-colors"
+              >
+                I have saved my backup key
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 2. GMGN Order Type & Exact Switch (Matching Image 3) */}
         <div className="p-3.5 rounded-xl bg-[#080c14] border border-slate-800 mb-4 space-y-3">
