@@ -84,13 +84,11 @@ export default function BotControlsModal({ isOpen, onClose }) {
   };
 
   const handleSaveSettings = async () => {
-    if (!connectedWallet) {
-      alert('Connect wallet to persist bot settings.');
-      return;
-    }
     setLoading(true);
     try {
-      await botApi.updateConfig(connectedWallet, botConfig);
+      if (connectedWallet) {
+        await botApi.updateConfig(connectedWallet, botConfig);
+      }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch (err) {

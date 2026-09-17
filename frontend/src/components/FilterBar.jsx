@@ -1,8 +1,8 @@
 import React from 'react';
 import { IconSliders, IconClose } from './Icons';
-import { DEFAULT_FILTERS, isTokenMatchingFilters } from '../engine/filterEngine.js';
+import { DEFAULT_FILTERS, isTokenMatchingFilters, hasActiveFilterCriteria } from '../engine/filterEngine.js';
 
-export { DEFAULT_FILTERS, isTokenMatchingFilters };
+export { DEFAULT_FILTERS, isTokenMatchingFilters, hasActiveFilterCriteria };
 
 export default function FilterBar({ filters, setFilters, onReset, activeFilterCount }) {
   const [isExpandedMobile, setIsExpandedMobile] = React.useState(false);
@@ -98,6 +98,21 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
                 <span className="text-[10px] text-slate-400 ml-0.5">%</span>
               </div>
             </div>
+          </div>
+
+          {/* Active Alert Tuning Indicator */}
+          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 sm:py-1.5 rounded-lg bg-slate-900 border border-slate-700/80 shadow-inner font-mono text-[11px]">
+            <span className="text-slate-400 uppercase text-[10px] tracking-wider">Alerts:</span>
+            {activeFilterCount > 0 ? (
+              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                Filtered Matches Only
+              </span>
+            ) : (
+              <span className="text-slate-500 font-medium">
+                Idle (Set filters to alert)
+              </span>
+            )}
           </div>
 
           {activeFilterCount > 0 && (

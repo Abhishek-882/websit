@@ -105,3 +105,26 @@ export function isTokenMatchingFilters(token, filters) {
 
   return true;
 }
+
+/**
+ * Determines whether user has any active/restrictive filter criteria enabled.
+ * If false, user is viewing the full unfiltered firehose (no alert toasts or chimes).
+ */
+export function hasActiveFilterCriteria(filters) {
+  if (!filters) return false;
+  if (filters.search && filters.search.trim() !== '') return true;
+  if (filters.mcapPreset && filters.mcapPreset !== 'all') return true;
+  if (filters.mcapMin !== '' && filters.mcapMin !== undefined && !isNaN(parseFloat(filters.mcapMin))) return true;
+  if (filters.mcapMax !== '' && filters.mcapMax !== undefined && !isNaN(parseFloat(filters.mcapMax))) return true;
+  if ((filters.mcapMinSlider || 0) > 0) return true;
+  if (filters.agePreset && filters.agePreset !== 'all') return true;
+  if ((filters.ageMaxHours || 0) > 0) return true;
+  if (filters.smartPreset && filters.smartPreset !== 'all') return true;
+  if ((filters.smartMinSlider || 0) > 0) return true;
+  if (filters.kolPreset && filters.kolPreset !== 'all') return true;
+  if ((filters.kolMinSlider || 0) > 0) return true;
+  if (filters.devPreset && filters.devPreset !== 'all') return true;
+  if ((filters.devMinMoneySliderUsd || 0) > 0) return true;
+  if ((filters.devMinMoneySlider || 0) > 0) return true;
+  return false;
+}

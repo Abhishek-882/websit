@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Header from './components/Header';
-import FilterBar, { DEFAULT_FILTERS, isTokenMatchingFilters } from './components/FilterBar';
+import FilterBar, { DEFAULT_FILTERS, isTokenMatchingFilters, hasActiveFilterCriteria } from './components/FilterBar';
 import TokenTable from './components/TokenTable';
 import ToastContainer from './components/ToastContainer';
 import BotControlsModal from './components/BotControlsModal';
@@ -19,14 +19,41 @@ import {
   IconVolumeX,
 } from './components/Icons';
 
+const STORAGE_KEY_FILTERS = 'solana_radar_filters';
+
+function loadSavedFilters() {
+  if (typeof window === 'undefined') return DEFAULT_FILTERS;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_FILTERS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...DEFAULT_FILTERS, ...parsed };
+    }
+  } catch (e) {
+    console.warn('[Solana Radar] Error loading saved filters:', e);
+  }
+  return DEFAULT_FILTERS;
+}
+
 export default function App() {
   const [tokens, setTokens] = useState([]);
   const [lastScanTimestamp, setLastScanTimestamp] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
   const [gmgnPool, setGmgnPool] = useState(null);
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState(loadSavedFilters);
   const [soundMuted, setSoundMuted] = useState(soundFX.isMuted());
   const [highlightedAddress, setHighlightedAddress] = useState(null);
+
+  // Synchronize ref and localStorage with current filters
+  const filtersRef = useRef(filters);
+  useEffect(() => {
+    filtersRef.current = filters;
+    try {
+      localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(filters));
+    } catch (e) {
+      console.warn('[Solana Radar] Error saving filters:', e);
+    }
+  }, [filters]);
 
   // Trading Bot store & modal state
   const isBotModalOpen = useBotStore(s => s.isBotModalOpen);
@@ -177,17 +204,23 @@ export default function App() {
   // Calculate active filters count
   const activeFilterCount = useMemo(() => {
     let count = 0;
-    if (filters.mcapPreset !== 'all' || filters.mcapMinSlider > 0) count++;
+    if (filters.mcapPreset !== 'all' || filters.mcapMinSlider > 0 || filters.mcapMin || filters.mcapMax) count++;
     if (filters.agePreset !== 'all' || filters.ageMaxHours > 0) count++;
     if (filters.smartPreset !== 'all' || filters.smartMinSlider > 0) count++;
     if (filters.kolPreset !== 'all' || filters.kolMinSlider > 0) count++;
     if (filters.devPreset !== 'all' || (filters.devMinMoneySliderUsd ?? 0) > 0 || (filters.devMinMoneySlider ?? 0) > 0) count++;
+    if (filters.search && filters.search.trim() !== '') count++;
     return count;
   }, [filters]);
 
   // Reset filters helper
   const handleResetFilters = () => {
     setFilters(DEFAULT_FILTERS);
+    try {
+      localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(DEFAULT_FILTERS));
+    } catch (e) {
+      console.warn('[Solana Radar] Error resetting saved filters:', e);
+    }
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -235,6 +268,9 @@ export default function App() {
   const handleIncomingTokens = (freshTokens) => {
     if (!Array.isArray(freshTokens) || freshTokens.length === 0) return;
 
+    const currentFilters = filtersRef.current || filters;
+    const hasActiveFilters = hasActiveFilterCriteria(currentFilters);
+
     const now = Date.now();
     const DEDUP_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes per token
 
@@ -247,15 +283,26 @@ export default function App() {
       return;
     }
 
+    // STRICT USER DIRECTIVE:
+    // Sound & notifications must NOT fire for every new coin!
+    // When no active filters are set (idle mode), do not spam notifications or sounds.
+    if (!hasActiveFilters) {
+      freshTokens.forEach(t => {
+        knownAddressSetRef.current.add(t.address);
+      });
+      return;
+    }
+
     for (const t of freshTokens) {
       knownAddressSetRef.current.add(t.address);
 
-      if (isTokenMatchingFilters(t, filters)) {
+      // Evaluate token strictly against user's active filter settings
+      if (isTokenMatchingFilters(t, currentFilters)) {
         const lastAlerted = alertedHistoryRef.current.get(t.address) || 0;
         if (now - lastAlerted > DEDUP_COOLDOWN_MS) {
           alertedHistoryRef.current.set(t.address, now);
 
-          // 1. In-app toast popup
+          // 1. In-app toast popup (ONLY for qualified filter matches)
           toastQueueRef.current.push({
             token: t,
             title: `Signal Match: $${t.symbol}`,
@@ -279,7 +326,11 @@ export default function App() {
 
     isDisplayingToastRef.current = true;
     setActiveToast(next);
-    soundFX.playAlertChime();
+
+    // Sound alert only fires for qualified filter matches and respects mute setting
+    if (hasActiveFilterCriteria(filtersRef.current)) {
+      soundFX.playAlertChime();
+    }
 
     clearToastTimer();
     toastTimerRef.current = setTimeout(() => {

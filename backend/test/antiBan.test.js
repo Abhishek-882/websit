@@ -335,6 +335,48 @@ await runTest('In-Memory Filter Engine evaluates all 5 dimensions without API ca
 });
 
 // ─────────────────────────────────────────────────────────────
+// 6b. Notification & Sound Filter Gating Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('Notification & Sound alerts are strictly gated by active filter criteria (prevents chime on every coin)', async () => {
+  const { DEFAULT_FILTERS, hasActiveFilterCriteria, isTokenMatchingFilters } = await import('../../frontend/src/engine/filterEngine.js');
+
+  // 1. Default filters have 0 active criteria -> Notifications and sound are IDLE
+  assert.equal(hasActiveFilterCriteria(DEFAULT_FILTERS), false, 'Default filters should have no active criteria');
+
+  // 2. Custom criteria correctly detected as active
+  assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, smartPreset: '>=2' }), true, 'Smart money preset should activate filter criteria');
+  assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, mcapPreset: '<50k' }), true, 'Mcap preset should activate filter criteria');
+  assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, ageMaxHours: 2 }), true, 'Age slider should activate filter criteria');
+  assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, devPreset: 'cex' }), true, 'Dev CEX preset should activate filter criteria');
+  assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, search: 'BONK' }), true, 'Search text should activate filter criteria');
+
+  // 3. Token evaluation behavior:
+  // Random coin without smart money:
+  const randomCoin = {
+    symbol: 'RANDOM',
+    marketCap: 20000,
+    ageMs: 60000,
+    smartMoneyCount: 0,
+    kolCount: 0,
+  };
+
+  // When user configures smart money filter:
+  const userFilters = { ...DEFAULT_FILTERS, smartPreset: '>=1' };
+  assert.equal(hasActiveFilterCriteria(userFilters), true, 'User filters are active');
+  assert.equal(isTokenMatchingFilters(randomCoin, userFilters), false, 'Random coin with 0 smart money must NOT qualify for alert');
+
+  // Token with smart money:
+  const smartCoin = {
+    symbol: 'SMARTCOIN',
+    marketCap: 40000,
+    ageMs: 60000,
+    smartMoneyCount: 3,
+    kolCount: 1,
+  };
+  assert.equal(isTokenMatchingFilters(smartCoin, userFilters), true, 'Smart coin qualifies for notification and sound chime');
+});
+
+// ─────────────────────────────────────────────────────────────
 // 7. Fibonacci Retracement Limit Order Calculation Tests
 // ─────────────────────────────────────────────────────────────
 await runTest('Fibonacci Limit Orders calculate exact retracement price targets (-10%, -20%, -30%)', () => {
