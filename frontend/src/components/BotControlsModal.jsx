@@ -27,8 +27,10 @@ const FIBONACCI_SPOTS = [
   { label: '-30% (Fib 0.500 Deep Retracement)', value: 30 },
 ];
 
-const QUICK_BUY_AMOUNTS = [0.05, 0.1, 0.2, 0.5, 1.0];
-const DEPOSIT_PRESETS = [0.05, 0.1, 0.2, 0.5, 1.0];
+const QUICK_BUY_AMOUNTS = [0.01, 0.05, 0.1, 0.2, 0.5, 1.0];
+const DEPOSIT_PRESETS = [0.01, 0.05, 0.1, 0.2, 0.5, 1.0];
+
+import SetFileManager from './SetFileManager';
 
 export default function BotControlsModal({ isOpen, onClose }) {
   const { publicKey, sendTransaction, signMessage } = useWallet();
@@ -50,6 +52,9 @@ export default function BotControlsModal({ isOpen, onClose }) {
   const [copied, setCopied] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState('trading'); // 'trading' | 'setFiles'
 
   // 1-Click Deposit state
   const [depositAmount, setDepositAmount] = useState(0.1);
@@ -284,8 +289,32 @@ export default function BotControlsModal({ isOpen, onClose }) {
           </div>
         )}
 
-        {/* 1. Delegated Session Wallet & 1-Click Phantom Deposit Card */}
-        <div className="p-4 rounded-xl bg-[#080c14] border border-slate-800 mb-4 space-y-3">
+        {/* Tab Navigation */}
+        <div className="flex items-center gap-2 mb-4 border-b border-slate-800 pb-2">
+          <button
+            onClick={() => setActiveTab('trading')}
+            className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors ${
+              activeTab === 'trading' ? 'bg-cyan-900/50 text-cyan-300 border border-cyan-700/50' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Trading Config
+          </button>
+          <button
+            onClick={() => setActiveTab('setFiles')}
+            className={`px-4 py-2 text-sm font-bold rounded-lg transition-colors ${
+              activeTab === 'setFiles' ? 'bg-cyan-900/50 text-cyan-300 border border-cyan-700/50' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Set Files
+          </button>
+        </div>
+
+        {activeTab === 'setFiles' && <SetFileManager />}
+        
+        {activeTab === 'trading' && (
+          <>
+            {/* 1. Delegated Session Wallet & 1-Click Phantom Deposit Card */}
+            <div className="p-4 rounded-xl bg-[#080c14] border border-slate-800 mb-4 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
@@ -337,7 +366,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
                   <div className="flex items-center gap-1 ml-auto">
                     <input
                       type="number"
-                      step="0.05"
+                      step="0.01"
                       min="0.01"
                       value={depositAmount}
                       onChange={(e) => setDepositAmount(parseFloat(e.target.value) || 0.1)}
@@ -677,7 +706,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
                 step="0.01"
                 min="0.01"
                 value={botConfig.buyAmountSol}
-                onChange={(e) => updateBotConfig({ buyAmountSol: parseFloat(e.target.value) || 0.05 })}
+                onChange={(e) => updateBotConfig({ buyAmountSol: parseFloat(e.target.value) || 0.01 })}
                 className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded text-slate-200 font-mono focus:outline-none focus:border-cyan-500"
               />
               <span className="text-xs font-mono text-slate-400 font-bold">SOL</span>
@@ -887,6 +916,8 @@ export default function BotControlsModal({ isOpen, onClose }) {
             </button>
           </div>
         </div>
+        </>
+        )}
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-3 border-t border-slate-800">

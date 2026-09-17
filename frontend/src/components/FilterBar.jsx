@@ -140,7 +140,7 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
       {/* The 5 Interactive Filter Metric Blocks (Collapsible on mobile) */}
       <div className={`${isExpandedMobile ? 'grid' : 'hidden sm:grid'} grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3`}>
 
-        {/* 1. Market Cap Filter */}
+        {/* 1. Market Cap Filter (Min/Max Value Entry + Draggable Slider) */}
         <div className="bg-[#0b0f19] p-3 rounded-lg border border-slate-800/90 flex flex-col justify-between space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] uppercase tracking-wider font-semibold text-slate-400">
@@ -149,76 +149,68 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
             <span className="text-[10px] text-slate-400">DexScreener</span>
           </div>
 
-          <div className="flex flex-wrap gap-1">
-            {[
-              { id: 'all', label: 'All' },
-              { id: '<50k', label: '< $50K' },
-              { id: '50k-250k', label: '$50K-250K' },
-              { id: '250k-1m', label: '$250K-1M' },
-              { id: '>1m', label: '> $1M' },
-            ].map(btn => (
-              <button
-                key={btn.id}
-                onClick={() => {
-                  update('mcapPreset', btn.id);
-                  if (btn.id !== 'custom') {
-                    update('mcapMin', '');
-                    update('mcapMax', '');
-                  }
+          {/* Min / Max Value Entry Inputs in Thousands (K) */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex-1">
+              <label className="text-[10px] text-slate-400 mb-0.5 block font-mono font-bold">Min K ($000s)</label>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                placeholder="0"
+                value={(Number(filters.mcapMin) || 0) > 0 ? (Number(filters.mcapMin) / 1000) : ''}
+                onChange={e => {
+                  const kVal = e.target.value === '' ? 0 : Number(e.target.value);
+                  update('mcapMin', kVal > 0 ? Math.round(kVal * 1000) : 0);
                 }}
-                className={`text-[11px] px-2 py-0.5 rounded transition-all font-medium ${
-                  filters.mcapPreset === btn.id && filters.mcapMinSlider === 0
-                    ? 'bg-cyan-500 text-slate-950 font-bold shadow-sm'
-                    : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white'
-                }`}
-              >
-                {btn.label}
-              </button>
-            ))}
+                className="w-full px-2 py-1 text-[11px] bg-slate-900 border border-slate-700 rounded text-slate-200 placeholder-slate-500 font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30"
+              />
+            </div>
+            <span className="text-slate-500 text-xs mt-4">-</span>
+            <div className="flex-1">
+              <label className="text-[10px] text-slate-400 mb-0.5 block font-mono font-bold">Max K ($000s)</label>
+              <input
+                type="number"
+                step="any"
+                min="0"
+                placeholder="No limit"
+                value={(Number(filters.mcapMax) || 0) > 0 ? (Number(filters.mcapMax) / 1000) : ''}
+                onChange={e => {
+                  const kVal = e.target.value === '' ? 0 : Number(e.target.value);
+                  update('mcapMax', kVal > 0 ? Math.round(kVal * 1000) : 0);
+                }}
+                className="w-full px-2 py-1 text-[11px] bg-slate-900 border border-slate-700 rounded text-slate-200 placeholder-slate-500 font-mono focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30"
+              />
+            </div>
           </div>
 
-          {/* Custom Min / Max inputs */}
-          <div className="flex items-center gap-1.5 pt-0.5">
-            <input
-              type="number"
-              placeholder="Min $"
-              value={filters.mcapMin}
-              onChange={e => {
-                update('mcapMin', e.target.value);
-                update('mcapPreset', 'custom');
-              }}
-              className="w-1/2 px-2 py-1 text-[11px] bg-slate-900 border border-slate-700 rounded text-slate-200 placeholder-slate-400 font-mono focus:outline-none focus:border-cyan-500"
-            />
-            <span className="text-slate-400 text-xs">-</span>
-            <input
-              type="number"
-              placeholder="Max $"
-              value={filters.mcapMax}
-              onChange={e => {
-                update('mcapMax', e.target.value);
-                update('mcapPreset', 'custom');
-              }}
-              className="w-1/2 px-2 py-1 text-[11px] bg-slate-900 border border-slate-700 rounded text-slate-200 placeholder-slate-400 font-mono focus:outline-none focus:border-cyan-500"
-            />
-          </div>
-
-          {/* Interactive Min Market Cap Slider */}
+          {/* Interactive Min Market Cap Draggable Slider (synced with Min input) */}
           <div className="pt-1 border-t border-slate-800/60">
             <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">
               <span>Min MCap Slider:</span>
               <span className="font-mono text-cyan-300 font-semibold">
-                {filters.mcapMinSlider > 0 ? `$${Math.round(filters.mcapMinSlider / 1000)}K` : 'Off'}
+                {(Number(filters.mcapMin) || 0) > 0
+                  ? (Number(filters.mcapMin) >= 1000000
+                    ? `$${(Number(filters.mcapMin) / 1000000).toFixed(1)}M`
+                    : `$${Math.round(Number(filters.mcapMin) / 1000)}K`)
+                  : 'Off'}
               </span>
             </div>
             <input
               type="range"
               min="0"
-              max="1000000"
+              max="5000000"
               step="25000"
-              value={filters.mcapMinSlider}
-              onChange={e => update('mcapMinSlider', Number(e.target.value))}
+              value={Math.min(Number(filters.mcapMin) || 0, 5000000)}
+              onChange={e => update('mcapMin', Number(e.target.value))}
               className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
             />
+            <div className="flex justify-between text-[9px] text-slate-500 mt-0.5 font-mono">
+              <span>$0</span>
+              <span>$1M</span>
+              <span>$2.5M</span>
+              <span>$5M</span>
+            </div>
           </div>
         </div>
 
@@ -422,8 +414,41 @@ export default function FilterBar({ filters, setFilters, onReset, activeFilterCo
             ))}
           </div>
 
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-[10px] text-slate-400">Dev Must Not Hold:</span>
+            <button
+              onClick={() => update('devMustNotHold', !filters.devMustNotHold)}
+              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                filters.devMustNotHold ? 'bg-amber-500' : 'bg-slate-700'
+              }`}
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                filters.devMustNotHold ? 'translate-x-3.5' : 'translate-x-0.5'
+              }`} />
+            </button>
+          </div>
+
+          <div className="pt-1 border-t border-slate-800/60">
+            <div className="flex justify-between text-[10px] text-slate-400 mb-0.5">
+              <span>Max Dev Holding %:</span>
+              <span className="font-mono text-amber-300 font-semibold">
+                {(filters.devMaxHoldingPct || 0) > 0 ? `< ${filters.devMaxHoldingPct}%` : 'Off'}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value={filters.devMaxHoldingPct || 0}
+              onChange={e => update('devMaxHoldingPct', Number(e.target.value))}
+              className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400"
+              title="Max % of token supply the dev can hold"
+            />
+          </div>
+
           {/* Quick USD Presets for Dev Money Bar */}
-          <div className="flex flex-wrap gap-1 pt-0.5">
+          <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-800/60 mt-1">
             {[
               { label: '≥ $500', val: 500 },
               { label: '≥ $1K', val: 1000 },

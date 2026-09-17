@@ -5,6 +5,7 @@ import TokenTable from './components/TokenTable';
 import ToastContainer from './components/ToastContainer';
 import BotControlsModal from './components/BotControlsModal';
 import TradesModal from './components/TradesModal';
+import AuthScreen from './components/AuthScreen';
 import { useBotStore } from './stores/botStore';
 import { botApi } from './api/botClient';
 import { soundFX } from './engine/soundFX';
@@ -27,7 +28,16 @@ function loadSavedFilters() {
     const raw = localStorage.getItem(STORAGE_KEY_FILTERS);
     if (raw) {
       const parsed = JSON.parse(raw);
-      return { ...DEFAULT_FILTERS, ...parsed };
+      const merged = { ...DEFAULT_FILTERS, ...parsed };
+      // Migration: convert old string mcapMin/mcapMax and mcapMinSlider to numeric mcapMin/mcapMax
+      const oldMin = Number(merged.mcapMin) || 0;
+      const oldSlider = Number(merged.mcapMinSlider) || 0;
+      merged.mcapMin = Math.max(oldMin, oldSlider);
+      merged.mcapMax = Number(merged.mcapMax) || 0;
+      // Clean up legacy keys
+      delete merged.mcapPreset;
+      delete merged.mcapMinSlider;
+      return merged;
     }
   } catch (e) {
     console.warn('[Solana Radar] Error loading saved filters:', e);
@@ -36,6 +46,7 @@ function loadSavedFilters() {
 }
 
 export default function App() {
+  const [authToken, setAuthToken] = useState(localStorage.getItem('auth_token') || null);
   const [tokens, setTokens] = useState([]);
   const [lastScanTimestamp, setLastScanTimestamp] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -78,6 +89,32 @@ export default function App() {
   // PWA Home Screen Installation State
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isInstalled, setIsInstalled] = useState(false);
+
+  // App Update Notification
+  const [needsUpdate, setNeedsUpdate] = useState(false);
+
+  useEffect(() => {
+    let interval;
+    const checkVersion = async () => {
+      try {
+        const res = await fetch('/api/version');
+        if (res.ok) {
+          const data = await res.json();
+          // If server restarted, and its timestamp doesn't match our build timestamp, show update (unless local is a dev build where define is omitted/different)
+          if (typeof __BUILD_TIMESTAMP__ !== 'undefined' && data.timestamp && data.timestamp > __BUILD_TIMESTAMP__) {
+            setNeedsUpdate(true);
+          }
+        }
+      } catch (err) {
+        // fail silently
+      }
+    };
+    // Initial check
+    checkVersion();
+    // Poll every 60 seconds
+    interval = setInterval(checkVersion, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const handleBeforeInstall = (e) => {
@@ -204,7 +241,7 @@ export default function App() {
   // Calculate active filters count
   const activeFilterCount = useMemo(() => {
     let count = 0;
-    if (filters.mcapPreset !== 'all' || filters.mcapMinSlider > 0 || filters.mcapMin || filters.mcapMax) count++;
+    if ((Number(filters.mcapMin) || 0) > 0 || (Number(filters.mcapMax) || 0) > 0) count++;
     if (filters.agePreset !== 'all' || filters.ageMaxHours > 0) count++;
     if (filters.smartPreset !== 'all' || filters.smartMinSlider > 0) count++;
     if (filters.kolPreset !== 'all' || filters.kolMinSlider > 0) count++;
@@ -353,11 +390,32 @@ export default function App() {
     setTimeout(() => setHighlightedAddress(null), 4000);
   };
 
+  const handleAuthSuccess = (token) => {
+    localStorage.setItem('auth_token', token);
+    setAuthToken(token);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token');
+    setAuthToken(null);
+  };
+
+  if (!authToken) {
+    return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
+  }
+
   return (
     <div className="min-h-screen bg-[#080b12] text-slate-100 flex flex-col font-sans">
       
+      {needsUpdate && (
+        <div className="sticky top-0 z-[100] bg-brandCyan/10 border-b border-brandCyan text-brandCyan text-sm font-bold text-center py-2 px-4 shadow-lg backdrop-blur-sm cursor-pointer hover:bg-brandCyan/20 transition-colors" onClick={() => window.location.reload()}>
+          🚀 A new version is available! Please click here or refresh to update.
+        </div>
+      )}
+
       {/* 1. Header with Solana Lock, Live Ticker, Phone Alerts, Bot & Trades Modals */}
       <Header
+        onLogout={handleLogout}
         lastScanTimestamp={lastScanTimestamp}
         isScanning={isScanning}
         totalTokens={tokens.length}

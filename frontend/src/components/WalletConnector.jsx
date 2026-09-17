@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
 import { IconClose } from './Icons';
+import { RPC_ENDPOINTS } from '../config/rpc.js';
 
 export default function WalletConnector() {
   const { setVisible } = useWalletModal();
@@ -18,13 +19,16 @@ export default function WalletConnector() {
   const setSessionBalance = useBotStore(s => s.setSessionBalance);
   const setBotConfig = useBotStore(s => s.setBotConfig);
   const setTrades = useBotStore(s => s.setTrades);
+  const setSetFiles = useBotStore(s => s.setSetFiles);
+  const setActiveSetFile = useBotStore(s => s.setActiveSetFile);
 
   const [solBal, setSolBal] = useState(0);
+  const debounceRef = useRef(null);
 
   const address = publicKey?.toBase58();
   const short = address ? `${address.slice(0, 4)}...${address.slice(-4)}` : null;
 
-  // Sync wallet address to store
+  // Sync wallet address to store — debounced 300ms to avoid double-firing on mobile reconnect
   useEffect(() => {
     setConnected(address || null);
     if (!address) {
@@ -32,49 +36,161 @@ export default function WalletConnector() {
       return;
     }
 
-    // Fetch existing session wallet & trades on connect
-    botApi.getSession(address)
-      .then(res => {
-        if (res.sessionPubkey) setSessionPubkey(res.sessionPubkey);
-        if (res.balanceSol !== undefined) setSessionBalance(res.balanceSol);
-        if (res.botConfig) setBotConfig(res.botConfig);
-      })
-      .catch(() => {});
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      // Fire all 3 API calls in PARALLEL — no waiting for one before the next
+      Promise.allSettled([
+        botApi.getSession(address),
+        botApi.getTrades(address),
+        botApi.getSetFiles(address),
+      ]).then(([sessionRes, tradesRes, setFilesRes]) => {
+        // Session
+        if (sessionRes.status === 'fulfilled') {
+          const res = sessionRes.value;
+          if (res.sessionPubkey) setSessionPubkey(res.sessionPubkey);
+          if (res.balanceSol !== undefined) setSessionBalance(res.balanceSol);
+          if (res.botConfig) setBotConfig(res.botConfig);
+        }
+        // Trades
+        if (tradesRes.status === 'fulfilled') {
+          const res = tradesRes.value;
+          if (Array.isArray(res.trades)) setTrades(res.trades);
+        }
+        // Set Files
+        if (setFilesRes.status === 'fulfilled') {
+          const res = setFilesRes.value;
+          if (Array.isArray(res.setFiles)) {
+            setSetFiles(res.setFiles);
+            const active = res.setFiles.find(f => f.isActive);
+            setActiveSetFile(active || null);
+          }
+        }
+      });
+    }, 300);
 
-    botApi.getTrades(address)
-      .then(res => {
-        if (Array.isArray(res.trades)) setTrades(res.trades);
-      })
-      .catch(() => {});
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [address]);
 
-  // Fetch main wallet SOL balance
+  // Fetch main wallet SOL balance with RPC failover
+  const fetchBalWithFallback = useCallback(async (pubkey) => {
+    const endpoints = RPC_ENDPOINTS || [connection?.rpcEndpoint];
+    for (const ep of endpoints) {
+      try {
+        const conn = ep === connection?.rpcEndpoint ? connection : new Connection(ep, 'confirmed');
+        const b = await conn.getBalance(pubkey);
+        setSolBal(b / LAMPORTS_PER_SOL);
+        return; // success — stop trying
+      } catch {
+        // try next endpoint
+      }
+    }
+  }, [connection]);
+
+  // Fetch balance on connect, poll every 30s (reduced from 15s — saves mobile data/battery)
   useEffect(() => {
-    if (!publicKey || !connection) return;
-    const fetchBal = () => {
-      connection.getBalance(publicKey)
-        .then(b => setSolBal(b / LAMPORTS_PER_SOL))
-        .catch(() => {});
-    };
-    fetchBal();
-    const id = setInterval(fetchBal, 15000);
+    if (!publicKey) return;
+    fetchBalWithFallback(publicKey);
+    const id = setInterval(() => fetchBalWithFallback(publicKey), 30000);
     return () => clearInterval(id);
-  }, [publicKey, connection]);
+  }, [publicKey, fetchBalWithFallback]);
+
+  const [showMobileModal, setShowMobileModal] = useState(false);
+  const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const isInAppBrowser = typeof window !== 'undefined' && Boolean(window.phantom?.solana || window.solana);
+
+  const handleConnectClick = () => {
+    if (isMobile && !isInAppBrowser) {
+      setShowMobileModal(true);
+    } else {
+      setVisible(true);
+    }
+  };
+
+  const phantomDeepLink = typeof window !== 'undefined'
+    ? `https://phantom.app/ul/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`
+    : '#';
+
+  const solflareDeepLink = typeof window !== 'undefined'
+    ? `https://solflare.com/ul/v1/browse/${encodeURIComponent(window.location.href)}?ref=${encodeURIComponent(window.location.origin)}`
+    : '#';
 
   if (!connected) {
     return (
-      <button
-        onClick={() => setVisible(true)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md active:scale-95 transition-all"
-        title="Connect Phantom / Solflare wallet"
-      >
-        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-        </svg>
-        <span className="hidden xs:inline">Connect Wallet</span>
-        <span className="xs:hidden">Connect</span>
-      </button>
+      <>
+        <button
+          onClick={handleConnectClick}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md active:scale-95 transition-all"
+          title="Connect Phantom / Solflare wallet"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+          <span className="hidden xs:inline">Connect Wallet</span>
+          <span className="xs:hidden">Connect</span>
+        </button>
+
+        {showMobileModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
+                  Connect Mobile Wallet
+                </h3>
+                <button
+                  onClick={() => setShowMobileModal(false)}
+                  className="text-slate-400 hover:text-white p-1"
+                >
+                  <IconClose className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Mobile Safari & Chrome don't allow direct Web3 communication. Tap below to launch directly inside your wallet app:
+              </p>
+
+              <div className="space-y-2.5">
+                <a
+                  href={phantomDeepLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between p-3 rounded-lg bg-purple-950/60 border border-purple-700/50 hover:bg-purple-900/60 text-purple-200 text-xs font-bold transition-all shadow-md active:scale-98"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-purple-400" />
+                    Open in Phantom App
+                  </span>
+                  <span className="text-[10px] text-purple-400 bg-purple-900/80 px-2 py-0.5 rounded font-mono">1-Tap</span>
+                </a>
+
+                <a
+                  href={solflareDeepLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between p-3 rounded-lg bg-amber-950/60 border border-amber-700/50 hover:bg-amber-900/60 text-amber-200 text-xs font-bold transition-all shadow-md active:scale-98"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                    Open in Solflare App
+                  </span>
+                  <span className="text-[10px] text-amber-400 bg-amber-900/80 px-2 py-0.5 rounded font-mono">1-Tap</span>
+                </a>
+
+                <button
+                  onClick={() => {
+                    setShowMobileModal(false);
+                    setVisible(true);
+                  }}
+                  className="w-full text-center py-2.5 text-xs text-slate-400 hover:text-white transition-colors border border-slate-800 rounded-lg bg-slate-950/50"
+                >
+                  Standard Wallet Selector
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
     );
   }
 

@@ -345,7 +345,7 @@ await runTest('Notification & Sound alerts are strictly gated by active filter c
 
   // 2. Custom criteria correctly detected as active
   assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, smartPreset: '>=2' }), true, 'Smart money preset should activate filter criteria');
-  assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, mcapPreset: '<50k' }), true, 'Mcap preset should activate filter criteria');
+  assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, mcapMin: 50000 }), true, 'Mcap min should activate filter criteria');
   assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, ageMaxHours: 2 }), true, 'Age slider should activate filter criteria');
   assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, devPreset: 'cex' }), true, 'Dev CEX preset should activate filter criteria');
   assert.equal(hasActiveFilterCriteria({ ...DEFAULT_FILTERS, search: 'BONK' }), true, 'Search text should activate filter criteria');

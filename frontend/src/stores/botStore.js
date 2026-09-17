@@ -75,6 +75,13 @@ export const useBotStore = create(
       trades: [],
       setTrades: (trades) => set({ trades }),
 
+      // Set Files
+      setFiles: [],
+      activeSetFile: null,
+      activeSetFileName: '',
+      setSetFiles: (files) => set({ setFiles: files }),
+      setActiveSetFile: (file) => set({ activeSetFile: file, activeSetFileName: file ? file.name : '' }),
+
       // Modals
       isBotModalOpen: false,
       setIsBotModalOpen: (isOpen) => set({ isBotModalOpen: isOpen }),

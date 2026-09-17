@@ -1,7 +1,7 @@
 import { dexscreenerService } from './dexscreener.service.js';
 import { gmgnKeyPool } from './gmgnKeyPool.service.js';
 import { devFundService } from './devFund.service.js';
-import { getAllActiveSessions, createLimitOrder, getPendingLimitOrders, hasPendingLimitOrder, fillLimitOrder } from '../db/database.js';
+import { getAllActiveSessions, createLimitOrder, getPendingLimitOrders, hasPendingLimitOrder, fillLimitOrder, getActiveSetFile, isBoughtRecently, addBoughtToken, getTrades } from '../db/database.js';
 import { tradingService } from './trading.service.js';
 
 export class TokenAggregatorService {
@@ -386,65 +386,200 @@ export class TokenAggregatorService {
    * Evaluates if an enriched token qualifies for auto-buy across active bot sessions
    */
   async evaluateAutoBuyTriggers(token) {
+    if (!token.marketCap || token.marketCap <= 0) {
+      console.warn('[AutoBuy] BLOCKED: No valid market cap for', token.symbol);
+      return;
+    }
+    if (!token.priceUsd || token.priceUsd <= 0) {
+      console.warn('[AutoBuy] BLOCKED: No valid price for', token.symbol);
+      return;
+    }
+    if (!token.devFund || token.devFund.error) {
+      console.warn('[AutoBuy] BLOCKED: Dev fund check failed for', token.symbol);
+      return;
+    }
+    if (!token.enrichedAt) {
+      console.warn('[AutoBuy] BLOCKED: Token not fully enriched', token.symbol);
+      return;
+    }
+
     try {
       const activeSessions = await getAllActiveSessions();
       if (!Array.isArray(activeSessions) || activeSessions.length === 0) return;
 
       for (const session of activeSessions) {
-        const cfg = session.bot_config || {};
-        if (!cfg.autoBuy) continue;
+        // Load active set file from DB (not session.bot_config)
+        const activeSetFile = await getActiveSetFile(session.user_wallet);
+        if (!activeSetFile) continue;
 
-        // Verify criteria
+        const filters = activeSetFile.buyFilters || {};
+        const tradeCfg = activeSetFile.tradeConfig || {};
+        
+        // Normalized trade parameters (supports both nested tradeConfig and flat properties)
+        const buyAmount = Number(tradeCfg.buyAmountSol || activeSetFile.tradeSizeSol || 0.1);
+        const slippageBps = Number(tradeCfg.slippageBps || activeSetFile.slippageBps || 500);
+        const useJito = tradeCfg.useJito ?? true;
+        const orderType = tradeCfg.orderType || 'market';
+        const limitDipPct = Math.abs(Number(tradeCfg.limitDipPct || 20));
+
+        // Normalized re-entry cooldown (default 7 days)
+        const reentryEnabled = activeSetFile.reentryRule ? activeSetFile.reentryRule.enabled !== false : (activeSetFile.reentry ? (activeSetFile.reentry.enabled ?? true) : true);
+        const reentryDays = Number(activeSetFile.reentryRule?.noReentryDays || activeSetFile.reentry?.cooldownDays || 7);
+
+        // Normalized DCA configuration
+        const isDcaEnabled = Boolean(tradeCfg.isDca || activeSetFile.dcaConfig?.enabled || activeSetFile.dca?.enabled);
+        let dcaDipLevels = [];
+        if (Array.isArray(activeSetFile.dcaConfig?.dipLevels) && activeSetFile.dcaConfig.dipLevels.length > 0) {
+          dcaDipLevels = activeSetFile.dcaConfig.dipLevels;
+        } else if (activeSetFile.dca?.enabled) {
+          dcaDipLevels = [
+            { part: 1, dipPct: 0, amountSol: buyAmount },
+            { part: 2, dipPct: Math.abs(Number(activeSetFile.dca.part2DipPct || 10)), amountSol: buyAmount },
+            { part: 3, dipPct: Math.abs(Number(activeSetFile.dca.part3DipPct || 20)), amountSol: buyAmount },
+          ];
+        }
+
+        // ── CRITICAL SAFETY GUARDS ─────────────────────────────────────────
+        // NEVER buy if any required data fetch failed or is missing.
+        // This is a money-safety measure: don't buy what you can't verify.
+        if (!token.marketCap || token.marketCap <= 0) {
+          console.warn(`[AutoBuy] BLOCKED: No valid market cap for ${token.symbol} (${token.address?.slice(0, 8)})`);
+          continue;
+        }
+        if (!token.priceUsd || token.priceUsd <= 0) {
+          console.warn(`[AutoBuy] BLOCKED: No valid price for ${token.symbol} (${token.address?.slice(0, 8)})`);
+          continue;
+        }
+        if (!token.devFund || token.devFund.error) {
+          console.warn(`[AutoBuy] BLOCKED: Dev fund check failed/missing for ${token.symbol} (${token.address?.slice(0, 8)})`);
+          continue;
+        }
+        if (!token.enrichedAt) {
+          console.warn(`[AutoBuy] BLOCKED: Token not fully enriched ${token.symbol} (${token.address?.slice(0, 8)})`);
+          continue;
+        }
+        // ── END SAFETY GUARDS ──────────────────────────────────────────────
+
+        // Verify criteria against setFile.buyFilters
         const mcap = token.marketCap || 0;
         const smart = token.smartMoneyCount ?? 0;
         const kol = token.kolCount ?? 0;
         const devMoneyUsd = token.devFund?.devBalanceUsd ?? 0;
 
-        if (cfg.minMcap && mcap < cfg.minMcap) continue;
-        if (cfg.maxMcap && mcap > cfg.maxMcap) continue;
-        if (cfg.minSmart && smart < cfg.minSmart) continue;
-        if (cfg.minKol && kol < cfg.minKol) continue;
-        if (cfg.minDevUsd && devMoneyUsd < cfg.minDevUsd) continue;
+        if (filters.mcapMin && mcap < filters.mcapMin) continue;
+        if (filters.mcapMax && mcap > filters.mcapMax) continue;
+        if (filters.smartMin && smart < filters.smartMin) continue;
+        if (filters.kolMin && kol < filters.kolMin) continue;
+        if (filters.devNetWorthMinUsd && devMoneyUsd < filters.devNetWorthMinUsd) continue;
 
-        console.log(`[BOT] 🎯 Criteria matched for $${token.symbol} by wallet ${session.user_wallet.slice(0, 8)}...`);
+        // Age filter
+        if (filters.ageMaxHours > 0 && token.ageMs > filters.ageMaxHours * 3600 * 1000) continue;
 
-        // Mode 1: Fibonacci Retracement Limit Buy
-        if (cfg.orderType === 'limit') {
-          const alreadyPending = await hasPendingLimitOrder(token.address, session.user_wallet);
-          if (alreadyPending) continue;
+        // Dev checks
+        if (filters.devMustBeCex && !token.devFund?.isCexFunded) continue;
+        if (filters.devMustHold && (token.devFund?.devStatus !== 'Holding' || token.devFund?.isDumped)) continue;
+        if (filters.devMaxHoldingPct > 0 && (token.devFund?.devHoldingPct || 0) > filters.devMaxHoldingPct) continue;
+        if (filters.devMustNotHold && token.devFund?.devStatus !== 'Dumped 100%' && token.devFund?.devStatus !== 'CTO') continue;
 
-          const spotPct = Math.abs(Number(cfg.limitDipPct || 20)); // e.g. 10%, 20%, 30% dip
-          const targetPriceUsd = (token.priceUsd || 0.001) * (1 - spotPct / 100);
+        // Check isBoughtRecently for no-re-entry cooldown
+        if (reentryEnabled) {
+          const isRecent = await isBoughtRecently(session.user_wallet, token.address, reentryDays);
+          if (isRecent) continue; // Skip, cooldown active
+        }
 
-          await createLimitOrder({
-            userWallet: session.user_wallet,
-            tokenAddress: token.address,
-            coinName: token.name,
-            coinSymbol: token.symbol,
-            entryPriceUsd: token.priceUsd,
-            targetPriceUsd,
-            limitDipPct: spotPct,
-            amountSol: Number(cfg.buyAmountSol || 0.1),
-            slippageBps: Number(cfg.slippageBps || 500),
-            useJito: cfg.useJito ?? true,
-            strategyRules: cfg.strategyRules || [],
-            closingType: cfg.closingType || 'amount',
-          });
+        // ── MAX POSITIONS GUARD ────────────────────────────────────────────
+        const maxPositions = Number(tradeCfg.maxPositions || activeSetFile.maxPositions || 0);
+        if (maxPositions > 0) {
+          const openTrades = await getTrades(session.user_wallet);
+          const openCount = openTrades.filter(t => t.status === 'open').length;
+          if (openCount >= maxPositions) {
+            console.warn(`[AutoBuy] BLOCKED: Max positions (${maxPositions}) reached for wallet ${session.user_wallet.slice(0, 8)}...`);
+            continue;
+          }
+        }
+        // ── END MAX POSITIONS GUARD ────────────────────────────────────────
 
-          console.log(`[BOT] 📉 Fibonacci Limit Order set for $${token.symbol} at spot -${spotPct}% ($${targetPriceUsd.toFixed(6)}) for wallet ${session.user_wallet.slice(0, 8)}`);
+        console.log(`[BOT] 🎯 Set File "${activeSetFile.name}" matched for $${token.symbol} by wallet ${session.user_wallet.slice(0, 8)}...`);
+
+        // Track the bought token to enforce cooldown
+        await addBoughtToken(session.user_wallet, token.address);
+
+        if (isDcaEnabled && dcaDipLevels.length > 0) {
+          // DCA Part 1 immediate execution
+          const part1 = dcaDipLevels.find(d => d.part === 1);
+          if (part1) {
+            tradingService.autoBuy({
+              userWallet: session.user_wallet,
+              tokenAddress: token.address,
+              coinName: token.name,
+              coinSymbol: token.symbol,
+              amountSol: Number(part1.amountSol || buyAmount),
+              slippageBps,
+              useJito,
+            }).catch(err => {
+              console.warn(`[BOT] DCA Part 1 execution notice for $${token.symbol}:`, err.message);
+            });
+          }
+          
+          // DCA Parts 2+ as pending limit orders
+          for (const part of dcaDipLevels) {
+            if (part.part === 1) continue;
+            const spotPct = Math.abs(Number(part.dipPct || 0));
+            if (spotPct <= 0) continue;
+            
+            const targetPriceUsd = (token.priceUsd || 0.001) * (1 - spotPct / 100);
+            await createLimitOrder({
+              userWallet: session.user_wallet,
+              tokenAddress: token.address,
+              coinName: token.name,
+              coinSymbol: token.symbol,
+              entryPriceUsd: token.priceUsd,
+              targetPriceUsd,
+              limitDipPct: spotPct,
+              amountSol: Number(part.amountSol || buyAmount),
+              slippageBps,
+              useJito,
+              strategyRules: tradeCfg.strategyRules || [],
+              closingType: tradeCfg.closingType || 'amount',
+              isDca: true,
+              dcaPart: part.part
+            });
+            console.log(`[BOT] 📉 DCA Part ${part.part} pending order set for $${token.symbol} at -${spotPct}% ($${targetPriceUsd.toFixed(6)})`);
+          }
         } else {
-          // Mode 2: Immediate Market Buy
-          tradingService.autoBuy({
-            userWallet: session.user_wallet,
-            tokenAddress: token.address,
-            coinName: token.name,
-            coinSymbol: token.symbol,
-            amountSol: Number(cfg.buyAmountSol || 0.1),
-            slippageBps: Number(cfg.slippageBps || 500),
-            useJito: cfg.useJito ?? true,
-          }).catch(err => {
-            console.warn(`[BOT] Auto-buy execution notice for $${token.symbol}:`, err.message);
-          });
+          // Standard Buy
+          if (orderType === 'limit') {
+            const targetPriceUsd = (token.priceUsd || 0.001) * (1 - limitDipPct / 100);
+
+            await createLimitOrder({
+              userWallet: session.user_wallet,
+              tokenAddress: token.address,
+              coinName: token.name,
+              coinSymbol: token.symbol,
+              entryPriceUsd: token.priceUsd,
+              targetPriceUsd,
+              limitDipPct,
+              amountSol: buyAmount,
+              slippageBps,
+              useJito,
+              strategyRules: tradeCfg.strategyRules || [],
+              closingType: tradeCfg.closingType || 'amount',
+            });
+            console.log(`[BOT] 📉 Limit Order set for $${token.symbol} at -${limitDipPct}%`);
+          } else {
+            // Immediate Market Buy
+            tradingService.autoBuy({
+              userWallet: session.user_wallet,
+              tokenAddress: token.address,
+              coinName: token.name,
+              coinSymbol: token.symbol,
+              amountSol: buyAmount,
+              slippageBps,
+              useJito,
+            }).catch(err => {
+              console.warn(`[BOT] Auto-buy execution notice for $${token.symbol}:`, err.message);
+            });
+          }
         }
       }
     } catch (err) {
@@ -459,7 +594,14 @@ export class TokenAggregatorService {
 
       for (const order of pendingOrders) {
         const token = this.tokensMap.get(order.tokenAddress);
-        if (token && token.priceUsd > 0 && token.priceUsd <= order.targetPriceUsd) {
+        if (!token) continue;
+
+        if (!token.priceUsd || token.priceUsd <= 0) {
+          console.warn('[AutoBuy] BLOCKED: No valid price for pending limit order', order.coinSymbol);
+          continue;
+        }
+
+        if (token.priceUsd <= order.targetPriceUsd) {
           console.log(`[BOT] 🎯 Fibonacci Retracement Hit for $${order.coinSymbol}! Target: $${order.targetPriceUsd.toFixed(6)}, Live: $${token.priceUsd.toFixed(6)}. Executing Limit Buy!`);
           try {
             await tradingService.autoBuy({

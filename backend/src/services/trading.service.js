@@ -131,15 +131,16 @@ export class TradingService {
     const tx = VersionedTransaction.deserialize(txBuf);
     tx.sign([keypair]);
 
+    const outSol = (parseInt(quote.outAmount, 10) || 0) / LAMPORTS_PER_SOL;
+
     const execRes = await tradeExecutionService.execute({
       connection: this.connection,
       tx,
       keypair,
-      tradeSizeSol: 0.05,
+      tradeSizeSol: outSol,
       useJito,
     });
     const sig = execRes.txSignature;
-    const outSol = (parseInt(quote.outAmount, 10) || 0) / LAMPORTS_PER_SOL;
 
     if (tradeId && tpLevel) {
       await updateTradeTP(tradeId, tpLevel);

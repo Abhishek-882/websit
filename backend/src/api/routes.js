@@ -3,9 +3,42 @@ import { tokenAggregatorService } from '../services/tokenAggregator.service.js';
 import { gmgnKeyPool } from '../services/gmgnKeyPool.service.js';
 import { sessionWalletService } from '../services/sessionWallet.service.js';
 import { tradingService } from '../services/trading.service.js';
-import { getBotConfig, updateBotConfig, getTrades } from '../db/database.js';
+import { getBotConfig, updateBotConfig, getTrades, saveSetFile, getSetFiles, getSetFile, deleteSetFile, getActiveSetFile, setActiveSetFile } from '../db/database.js';
+import { sendOtp, verifyOtp, verifyToken } from '../services/auth.service.js';
 
 const router = Router();
+
+// ── Auth Endpoints ──────────────────────────────────────────────────
+
+router.post('/auth/send-otp', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !email.endsWith('@gmail.com')) {
+      return res.status(400).json({ error: 'Valid Gmail address required' });
+    }
+    await sendOtp(email);
+    res.json({ success: true, message: 'OTP sent' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/auth/verify-otp', async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
+    const { token, user } = await verifyOtp(email, otp);
+    res.json({ success: true, token, user });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/auth/me', verifyToken, async (req, res) => {
+  res.json({ success: true, user: req.user });
+});
+
+router.use('/bot', verifyToken);
 
 /**
  * GET /api/tokens
@@ -161,12 +194,32 @@ router.get('/bot/trades/:wallet', async (req, res) => {
   }
 });
 
-/**
- * POST /api/bot/manual-buy
- */
 router.post('/bot/manual-buy', async (req, res) => {
   try {
     const { userWallet, tokenAddress, coinName, coinSymbol, amountSol, slippageBps } = req.body;
+    
+    const token = tokenAggregatorService.tokensMap.get(tokenAddress);
+    if (!token) {
+      console.warn('[AutoBuy] BLOCKED: Token not found in aggregator for', coinSymbol);
+      return res.status(400).json({ error: 'Token data not found' });
+    }
+    if (!token.marketCap || token.marketCap <= 0) {
+      console.warn('[AutoBuy] BLOCKED: No valid market cap for', token.symbol);
+      return res.status(400).json({ error: 'No valid market cap' });
+    }
+    if (!token.priceUsd || token.priceUsd <= 0) {
+      console.warn('[AutoBuy] BLOCKED: No valid price for', token.symbol);
+      return res.status(400).json({ error: 'No valid price' });
+    }
+    if (!token.devFund || token.devFund.error) {
+      console.warn('[AutoBuy] BLOCKED: Dev fund check failed for', token.symbol);
+      return res.status(400).json({ error: 'Dev fund check failed' });
+    }
+    if (!token.enrichedAt) {
+      console.warn('[AutoBuy] BLOCKED: Token not fully enriched', token.symbol);
+      return res.status(400).json({ error: 'Token not fully enriched' });
+    }
+
     const result = await tradingService.autoBuy({
       userWallet,
       tokenAddress,
@@ -194,6 +247,62 @@ router.post('/bot/manual-sell', async (req, res) => {
       slippageBps: Number(slippageBps || 500),
     });
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Set File Endpoints ──────────────────────────────────────────────
+
+router.get('/bot/set-files/:wallet', async (req, res) => {
+  try {
+    const files = await getSetFiles(req.params.wallet);
+    res.json({ success: true, setFiles: files || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/bot/set-file', async (req, res) => {
+  try {
+    const { userWallet, setFile } = req.body;
+    if (!userWallet || !setFile) return res.status(400).json({ error: 'Missing userWallet or setFile' });
+    const saved = await saveSetFile(userWallet, setFile);
+    res.json({ success: true, setFile: saved });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/bot/set-file', async (req, res) => {
+  try {
+    const { userWallet, id } = req.body;
+    if (!userWallet || !id) return res.status(400).json({ error: 'Missing userWallet or id' });
+    const deleted = await deleteSetFile(userWallet, id);
+    res.json({ success: deleted });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/bot/set-file/activate', async (req, res) => {
+  try {
+    const { userWallet, id } = req.body;
+    if (!userWallet || !id) return res.status(400).json({ error: 'Missing userWallet or id' });
+    const activated = await setActiveSetFile(userWallet, id);
+    res.json({ success: true, activeSetFile: activated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/bot/set-file/deactivate', async (req, res) => {
+  try {
+    const { userWallet } = req.body;
+    if (!userWallet) return res.status(400).json({ error: 'Missing userWallet' });
+    // Deactivate all set files for this wallet by activating a non-existent ID
+    await setActiveSetFile(userWallet, null);
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

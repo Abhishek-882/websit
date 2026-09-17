@@ -16,6 +16,7 @@ import {
   requestNotificationPermission,
   sendTestNotification,
 } from '../engine/phoneNotification.js';
+import { useBotStore } from '../stores/botStore.js';
 
 export default function Header({
   lastScanTimestamp,
@@ -34,6 +35,7 @@ export default function Header({
   const [secondsAgo, setSecondsAgo] = useState(null);
   const [notifPermission, setNotifPermission] = useState(getNotificationPermission());
   const [isRequestingNotif, setIsRequestingNotif] = useState(false);
+  const activeSetFileName = useBotStore(s => s.activeSetFileName);
 
   useEffect(() => {
     const updateTicker = () => {
@@ -147,7 +149,7 @@ export default function Header({
             </span>
             <span className="text-xs font-mono font-medium text-slate-200">
               {isScanning ? (
-                <span className="text-amber-300">Scanning Solana DEX...</span>
+                <span className="text-amber-300">Scanning...</span>
               ) : (
                 <span className="text-slate-300">Live | {formatAgoString()}</span>
               )}
@@ -157,6 +159,16 @@ export default function Header({
               <span>GMGN Telemetry Active</span>
             </span>
           </div>
+
+          {/* Bot Active Set File Indicator */}
+          {activeSetFileName && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-800/80 cursor-pointer hover:bg-emerald-900/60 transition-colors" title="Active Set File" onClick={onOpenBotModal}>
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] font-mono text-emerald-300 font-bold max-w-[120px] truncate">
+                BOT: {activeSetFileName}
+              </span>
+            </div>
+          )}
 
           <div className="sm:hidden flex items-center gap-1 text-[11px] font-mono text-slate-400">
             <span>Tracked:</span>
@@ -238,6 +250,15 @@ export default function Header({
                 <span>Audio On</span>
               </>
             )}
+          </button>
+
+          {/* Logout Button */}
+          <button
+            onClick={onLogout}
+            title="Logout"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-950/40 border border-red-700/60 text-red-300 hover:bg-red-900/50 font-medium transition-all"
+          >
+            Logout
           </button>
 
         </div>

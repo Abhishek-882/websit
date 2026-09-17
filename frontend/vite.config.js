@@ -16,6 +16,7 @@ export default defineConfig({
   define: {
     'process.env': {},
     global: 'globalThis',
+    __BUILD_TIMESTAMP__: Date.now(),
   },
   resolve: {
     alias: {

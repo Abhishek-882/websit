@@ -13,6 +13,10 @@ let localDb = {
   limit_orders: [],
   session_wallets: [],
   bot_configs: {},
+  set_files: [],
+  bought_tokens: [],
+  users: [],
+  auth_otps: []
 };
 
 function ensureLocalFile() {
@@ -27,6 +31,8 @@ function ensureLocalFile() {
       if (!Array.isArray(localDb.limit_orders)) localDb.limit_orders = [];
       if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
       if (!localDb.bot_configs) localDb.bot_configs = {};
+      if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
+      if (!Array.isArray(localDb.bought_tokens)) localDb.bought_tokens = [];
     } catch {
       // fresh file if corrupt
     }
@@ -221,3 +227,155 @@ export async function deactivateSession(userWallet) {
     saveLocalFile();
   }
 }
+
+// ── Set File helpers ───────────────────────────────────────────────
+
+export async function saveSetFile(userWallet, setFile) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
+  
+  const existingIdx = localDb.set_files.findIndex(s => s.id === setFile.id && s.userWallet === userWallet);
+  const now = new Date().toISOString();
+  
+  if (existingIdx >= 0) {
+    localDb.set_files[existingIdx] = { ...localDb.set_files[existingIdx], ...setFile, updatedAt: now };
+  } else {
+    localDb.set_files.push({ ...setFile, userWallet, createdAt: now, updatedAt: now });
+  }
+  saveLocalFile();
+  return existingIdx >= 0 ? localDb.set_files[existingIdx] : localDb.set_files[localDb.set_files.length - 1];
+}
+
+export async function getSetFiles(userWallet) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
+  return localDb.set_files.filter(s => s.userWallet === userWallet);
+}
+
+export async function getSetFile(userWallet, setFileId) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
+  return localDb.set_files.find(s => s.id === setFileId && s.userWallet === userWallet) || null;
+}
+
+export async function deleteSetFile(userWallet, setFileId) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
+  const idx = localDb.set_files.findIndex(s => s.id === setFileId && s.userWallet === userWallet);
+  if (idx >= 0) {
+    localDb.set_files.splice(idx, 1);
+    saveLocalFile();
+    return true;
+  }
+  return false;
+}
+
+export async function getActiveSetFile(userWallet) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
+  return localDb.set_files.find(s => s.userWallet === userWallet && s.isActive) || null;
+}
+
+export async function setActiveSetFile(userWallet, setFileId) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
+  let activated = null;
+  for (const s of localDb.set_files) {
+    if (s.userWallet === userWallet) {
+      if (s.id === setFileId) {
+        s.isActive = true;
+        activated = s;
+      } else {
+        s.isActive = false;
+      }
+      s.updatedAt = new Date().toISOString();
+    }
+  }
+  saveLocalFile();
+  return activated;
+}
+
+// ── Bought Token Tracker ───────────────────────────────────────────
+
+export async function addBoughtToken(userWallet, tokenAddress) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.bought_tokens)) localDb.bought_tokens = [];
+  
+  localDb.bought_tokens.push({
+    userWallet,
+    tokenAddress,
+    boughtAt: new Date().toISOString()
+  });
+  saveLocalFile();
+}
+
+export async function isBoughtRecently(userWallet, tokenAddress, cooldownDays) {
+  if (!cooldownDays || cooldownDays <= 0) return false;
+  
+  ensureLocalFile();
+  if (!Array.isArray(localDb.bought_tokens)) localDb.bought_tokens = [];
+  
+  const cutoffTime = Date.now() - (cooldownDays * 24 * 60 * 60 * 1000);
+  
+  return localDb.bought_tokens.some(bt => 
+    bt.userWallet === userWallet && 
+    bt.tokenAddress === tokenAddress && 
+    new Date(bt.boughtAt).getTime() > cutoffTime
+  );
+}
+
+// ── Auth & Users ───────────────────────────────────────────────────
+
+export async function findOrCreateUser(email) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.users)) localDb.users = [];
+  
+  let user = localDb.users.find(u => u.email === email);
+  if (!user) {
+    user = { id: localDb.users.length + 1, email, wallets: [], createdAt: new Date().toISOString() };
+    localDb.users.push(user);
+    saveLocalFile();
+  }
+  return user;
+}
+
+export async function addWalletToUser(email, walletAddress) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.users)) localDb.users = [];
+  let user = localDb.users.find(u => u.email === email);
+  if (user && !user.wallets.includes(walletAddress)) {
+    user.wallets.push(walletAddress);
+    saveLocalFile();
+  }
+}
+
+export async function getUser(email) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.users)) localDb.users = [];
+  return localDb.users.find(u => u.email === email) || null;
+}
+
+export async function saveOtp(email, otp) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.auth_otps)) localDb.auth_otps = [];
+  
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  localDb.auth_otps.push({ email, otp, expiresAt, used: false });
+  saveLocalFile();
+}
+
+export async function verifyAndConsumeOtp(email, otp) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.auth_otps)) localDb.auth_otps = [];
+  
+  const now = new Date().toISOString();
+  const validOtpIndex = localDb.auth_otps.findIndex(o => o.email === email && o.otp === otp && !o.used && o.expiresAt > now);
+  
+  if (validOtpIndex >= 0) {
+    localDb.auth_otps[validOtpIndex].used = true;
+    saveLocalFile();
+    return true;
+  }
+  return false;
+}
+

@@ -4,8 +4,13 @@
  */
 
 async function request(path, options = {}) {
+  const token = localStorage.getItem('auth_token');
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   const res = await fetch(`/api/bot${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers,
     ...options,
   });
   const data = await res.json();
@@ -60,5 +65,31 @@ export const botApi = {
     request('/manual-sell', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+
+  getSetFiles: (wallet) => request(`/set-files/${wallet}`),
+
+  saveSetFile: (userWallet, setFile) =>
+    request('/set-file', {
+      method: 'POST',
+      body: JSON.stringify({ userWallet, setFile }),
+    }),
+
+  deleteSetFile: (userWallet, id) =>
+    request('/set-file', {
+      method: 'DELETE',
+      body: JSON.stringify({ userWallet, id }),
+    }),
+
+  activateSetFile: (userWallet, id) =>
+    request('/set-file/activate', {
+      method: 'POST',
+      body: JSON.stringify({ userWallet, id }),
+    }),
+
+  deactivateSetFile: (userWallet) =>
+    request('/set-file/deactivate', {
+      method: 'POST',
+      body: JSON.stringify({ userWallet }),
     }),
 };

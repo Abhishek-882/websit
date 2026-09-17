@@ -265,6 +265,29 @@ export class DevFundService {
       statusLabel = 'Dumped 100%';
     }
 
+    let devHoldingPct = 0;
+    if (devAddress && mintAddress) {
+      try {
+        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+          new PublicKey(devAddress),
+          { mint: new PublicKey(mintAddress) }
+        );
+        let devTokenBalance = 0;
+        if (tokenAccounts.value.length > 0) {
+          devTokenBalance = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount || 0;
+        }
+
+        const supplyInfo = await this.connection.getTokenSupply(new PublicKey(mintAddress));
+        const totalSupply = supplyInfo.value.uiAmount || 0;
+
+        if (totalSupply > 0) {
+          devHoldingPct = (devTokenBalance / totalSupply) * 100;
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
     const fundingDisplay = funding.amountSol
       ? `${funding.source} (${funding.amountSol} SOL)`
       : (funding.source !== 'Unknown' ? funding.source : (devAddress ? `${devAddress.slice(0, 4)}...${devAddress.slice(-4)}` : 'Direct'));
@@ -273,6 +296,7 @@ export class DevFundService {
       devAddress,
       devBalanceSol: solBalance,
       devBalanceUsd,
+      devHoldingPct,
       fundingSource: funding.source !== 'Unknown' ? funding.source : (devAddress ? `${devAddress.slice(0, 4)}...${devAddress.slice(-4)}` : 'Direct'),
       isCexFunded: funding.isCex,
       fundingAmountSol: funding.amountSol,

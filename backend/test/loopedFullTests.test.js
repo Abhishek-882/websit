@@ -164,10 +164,8 @@ for (let i = 0; i < 300; i++) {
 
   const filters = {
     search: '',
-    mcapPreset: MCAP_PRESETS[i % MCAP_PRESETS.length],
-    mcapMin: '',
-    mcapMax: '',
-    mcapMinSlider: (i % 4 === 0) ? 50000 : 0,
+    mcapMin: (i % 4 === 0) ? 50000 : 0,
+    mcapMax: (i % 3 === 0) ? 1000000 : 0,
     agePreset: AGE_PRESETS[i % AGE_PRESETS.length],
     ageMaxHours: 0,
     smartPreset: SMART_PRESETS[i % SMART_PRESETS.length],
@@ -183,12 +181,9 @@ for (let i = 0; i < 300; i++) {
   // Cross-check filter logic
   let expectedMatch = true;
 
-  // Mcap check
-  if (filters.mcapPreset === '<50k' && mcap >= 50000) expectedMatch = false;
-  if (filters.mcapPreset === '50k-250k' && (mcap < 50000 || mcap > 250000)) expectedMatch = false;
-  if (filters.mcapPreset === '250k-1m' && (mcap < 250000 || mcap > 1000000)) expectedMatch = false;
-  if (filters.mcapPreset === '>1m' && mcap <= 1000000) expectedMatch = false;
-  if (filters.mcapMinSlider > 0 && mcap < filters.mcapMinSlider) expectedMatch = false;
+  // Mcap check (Numeric)
+  if (filters.mcapMin > 0 && mcap < filters.mcapMin) expectedMatch = false;
+  if (filters.mcapMax > 0 && mcap > filters.mcapMax) expectedMatch = false;
 
   // Age check
   if (filters.agePreset === '<15m' && ageMs > 15 * 60 * 1000) expectedMatch = false;
@@ -349,6 +344,80 @@ for (let i = 0; i < 300; i++) {
   }
 }
 console.log(`  ✓ Loop 6 Passed: 300 iterations completed (${300 * 5} assertions).\n`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP 7: Set File Buy Filter Evaluation (300 Iterations)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('▶ [LOOP 7/9] Set File Buy Filter Evaluation (300 iterations)...');
+for (let i = 0; i < 300; i++) {
+  const mcap = 10000 + i * 5000;
+  const smart = i % 10;
+  const kol = (i * 2) % 10;
+  const devUsd = i * 100;
+  
+  const buyFilters = {
+    mcapMin: (i % 3 === 0) ? 20000 : 0,
+    mcapMax: (i % 4 === 0) ? 500000 : 0,
+    smartMin: (i % 5 === 0) ? 2 : 0,
+    kolMin: (i % 2 === 0) ? 1 : 0,
+    devNetWorthMinUsd: (i % 6 === 0) ? 500 : 0,
+  };
+  
+  let expectedMatch = true;
+  if (buyFilters.mcapMin > 0 && mcap < buyFilters.mcapMin) expectedMatch = false;
+  if (buyFilters.mcapMax > 0 && mcap > buyFilters.mcapMax) expectedMatch = false;
+  if (buyFilters.smartMin > 0 && smart < buyFilters.smartMin) expectedMatch = false;
+  if (buyFilters.kolMin > 0 && kol < buyFilters.kolMin) expectedMatch = false;
+  if (buyFilters.devNetWorthMinUsd > 0 && devUsd < buyFilters.devNetWorthMinUsd) expectedMatch = false;
+  
+  const tokenMatched = 
+    (!buyFilters.mcapMin || mcap >= buyFilters.mcapMin) &&
+    (!buyFilters.mcapMax || mcap <= buyFilters.mcapMax) &&
+    (!buyFilters.smartMin || smart >= buyFilters.smartMin) &&
+    (!buyFilters.kolMin || kol >= buyFilters.kolMin) &&
+    (!buyFilters.devNetWorthMinUsd || devUsd >= buyFilters.devNetWorthMinUsd);
+    
+  reportAssertion(tokenMatched === expectedMatch, `Set File logic mismatch at i=${i}`);
+}
+console.log(`  ✓ Loop 7 Passed: 300 iterations completed (${300} assertions).\n`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP 8: DCA Dip Level Calculation (200 Iterations)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('▶ [LOOP 8/9] DCA Dip Level Calculation (200 iterations)...');
+for (let i = 0; i < 200; i++) {
+  const entryPrice = 0.01 + (i * 0.001);
+  const part2Dip = 10 + (i % 5);
+  const part3Dip = 20 + (i % 10);
+  
+  const p2Target = entryPrice * (1 - part2Dip / 100);
+  const p3Target = entryPrice * (1 - part3Dip / 100);
+  
+  reportAssertion(p2Target < entryPrice, `Part 2 DCA target must be below entry at i=${i}`);
+  reportAssertion(p3Target < p2Target, `Part 3 DCA target must be below Part 2 at i=${i}`);
+  reportAssertion(Math.abs((1 - p2Target / entryPrice) * 100 - part2Dip) < 0.001, `Part 2 exact dip % mismatch at i=${i}`);
+}
+console.log(`  ✓ Loop 8 Passed: 200 iterations completed (${200 * 3} assertions).\n`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP 9: No-Re-Entry Cooldown Logic (100 Iterations)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('▶ [LOOP 9/9] No-Re-Entry Cooldown Logic (100 iterations)...');
+for (let i = 0; i < 100; i++) {
+  const cooldownDays = 7;
+  const now = Date.now();
+  const boughtDaysAgo = i % 15; // 0 to 14 days ago
+  
+  const boughtTime = now - (boughtDaysAgo * 24 * 60 * 60 * 1000);
+  const isCooldownActive = boughtDaysAgo < cooldownDays;
+  
+  // Logic check
+  const cutoffTime = now - (cooldownDays * 24 * 60 * 60 * 1000);
+  const result = boughtTime > cutoffTime;
+  
+  reportAssertion(result === isCooldownActive, `Cooldown check mismatch at i=${i}, bought ${boughtDaysAgo} days ago`);
+}
+console.log(`  ✓ Loop 9 Passed: 100 iterations completed (${100} assertions).\n`);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Summary

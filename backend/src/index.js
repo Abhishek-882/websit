@@ -20,6 +20,12 @@ app.use(express.json());
 // API Routes
 app.use('/api', apiRouter);
 
+// App Version for Frontend Notification
+const STARTUP_TIME = Date.now();
+app.get('/api/version', (req, res) => {
+  res.json({ timestamp: STARTUP_TIME });
+});
+
 // 404 handler for unmatched API routes
 app.all('/api/*', (req, res) => {
   res.status(404).json({ success: false, error: 'API route not found' });
