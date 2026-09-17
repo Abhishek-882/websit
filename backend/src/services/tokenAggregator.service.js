@@ -1,7 +1,7 @@
 import { dexscreenerService } from './dexscreener.service.js';
 import { gmgnKeyPool } from './gmgnKeyPool.service.js';
 import { devFundService } from './devFund.service.js';
-import { getAllActiveSessions } from '../db/database.js';
+import { getAllActiveSessions, createLimitOrder, getPendingLimitOrders, hasPendingLimitOrder, fillLimitOrder } from '../db/database.js';
 import { tradingService } from './trading.service.js';
 
 export class TokenAggregatorService {
@@ -115,6 +115,10 @@ export class TokenAggregatorService {
           });
         }
       }
+
+      // Check pending Fibonacci Limit Orders & Advanced TP/SL positions
+      await this.checkPendingLimitOrders();
+      await tradingService.checkPositionsAgainstStrategy(this.tokensMap);
     } catch (err) {
       // Ticker error caught cleanly
     }
@@ -402,22 +406,79 @@ export class TokenAggregatorService {
         if (cfg.minKol && kol < cfg.minKol) continue;
         if (cfg.minDevUsd && devMoneyUsd < cfg.minDevUsd) continue;
 
-        console.log(`[BOT] 🎯 Auto-Buy criteria matched for $${token.symbol} by wallet ${session.user_wallet.slice(0, 8)}...`);
+        console.log(`[BOT] 🎯 Criteria matched for $${token.symbol} by wallet ${session.user_wallet.slice(0, 8)}...`);
 
-        tradingService.autoBuy({
-          userWallet: session.user_wallet,
-          tokenAddress: token.address,
-          coinName: token.name,
-          coinSymbol: token.symbol,
-          amountSol: Number(cfg.buyAmountSol || 0.1),
-          slippageBps: Number(cfg.slippageBps || 500),
-          useJito: cfg.useJito ?? true,
-        }).catch(err => {
-          console.warn(`[BOT] Auto-buy execution notice for $${token.symbol}:`, err.message);
-        });
+        // Mode 1: Fibonacci Retracement Limit Buy
+        if (cfg.orderType === 'limit') {
+          const alreadyPending = await hasPendingLimitOrder(token.address, session.user_wallet);
+          if (alreadyPending) continue;
+
+          const spotPct = Math.abs(Number(cfg.limitDipPct || 20)); // e.g. 10%, 20%, 30% dip
+          const targetPriceUsd = (token.priceUsd || 0.001) * (1 - spotPct / 100);
+
+          await createLimitOrder({
+            userWallet: session.user_wallet,
+            tokenAddress: token.address,
+            coinName: token.name,
+            coinSymbol: token.symbol,
+            entryPriceUsd: token.priceUsd,
+            targetPriceUsd,
+            limitDipPct: spotPct,
+            amountSol: Number(cfg.buyAmountSol || 0.1),
+            slippageBps: Number(cfg.slippageBps || 500),
+            useJito: cfg.useJito ?? true,
+            strategyRules: cfg.strategyRules || [],
+            closingType: cfg.closingType || 'amount',
+          });
+
+          console.log(`[BOT] 📉 Fibonacci Limit Order set for $${token.symbol} at spot -${spotPct}% ($${targetPriceUsd.toFixed(6)}) for wallet ${session.user_wallet.slice(0, 8)}`);
+        } else {
+          // Mode 2: Immediate Market Buy
+          tradingService.autoBuy({
+            userWallet: session.user_wallet,
+            tokenAddress: token.address,
+            coinName: token.name,
+            coinSymbol: token.symbol,
+            amountSol: Number(cfg.buyAmountSol || 0.1),
+            slippageBps: Number(cfg.slippageBps || 500),
+            useJito: cfg.useJito ?? true,
+          }).catch(err => {
+            console.warn(`[BOT] Auto-buy execution notice for $${token.symbol}:`, err.message);
+          });
+        }
       }
     } catch (err) {
       // Pass-through
+    }
+  }
+
+  async checkPendingLimitOrders() {
+    try {
+      const pendingOrders = await getPendingLimitOrders();
+      if (!Array.isArray(pendingOrders) || pendingOrders.length === 0) return;
+
+      for (const order of pendingOrders) {
+        const token = this.tokensMap.get(order.tokenAddress);
+        if (token && token.priceUsd > 0 && token.priceUsd <= order.targetPriceUsd) {
+          console.log(`[BOT] 🎯 Fibonacci Retracement Hit for $${order.coinSymbol}! Target: $${order.targetPriceUsd.toFixed(6)}, Live: $${token.priceUsd.toFixed(6)}. Executing Limit Buy!`);
+          try {
+            await tradingService.autoBuy({
+              userWallet: order.userWallet,
+              tokenAddress: order.tokenAddress,
+              coinName: order.coinName,
+              coinSymbol: order.coinSymbol,
+              amountSol: order.amountSol,
+              slippageBps: order.slippageBps,
+              useJito: order.useJito,
+            });
+            await fillLimitOrder(order.id, { filled_price_usd: token.priceUsd });
+          } catch (buyErr) {
+            console.warn(`[BOT] Limit order execution notice for $${order.coinSymbol}:`, buyErr.message);
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore
     }
   }
 
@@ -443,18 +504,25 @@ export class TokenAggregatorService {
     }
   }
 
-  parseHoldersAndSold(traderList, sellThreshold = 1.0) {
+  parseHoldersAndSold(traderList, sellThreshold = 0.99) {
     const holding = [];
     const sold = [];
 
     if (!Array.isArray(traderList)) return { holding, sold };
 
     for (const tr of traderList) {
-      const usdVal = Number(tr.usd_value || 0);
+      const usdVal = Number(tr.usd_value || tr.balance_usd || 0);
       const balance = Number(tr.balance || tr.amount_cur || 0);
       const sellPct = Number(tr.sell_amount_percentage || 0);
+      const boughtUsd = Number(tr.total_cost || tr.buy_volume_cur || tr.cost_cur || tr.history_bought_cost || 0);
+      const buyTxCount = Number(tr.buy_tx_count_cur || tr.buy_tx_count || tr.tx_count || 0);
+      const hasBought = (boughtUsd > 0 || buyTxCount > 0 || Number(tr.history_bought_amount || 0) > 0);
 
-      const isHolding = usdVal >= 50 && (balance > 0 || usdVal >= 50) && sellPct < sellThreshold;
+      // STRICT USER CRITERIA:
+      // 1. Must have actually bought the token with real capital (bought > 0, NOT brought by 0)
+      // 2. Must CURRENTLY hold token worth >= $50 USD
+      // 3. Must not have dumped 100% (sellPct < 0.99)
+      const isHolding = usdVal >= 50 && hasBought && sellPct < sellThreshold;
 
       const item = {
         address: tr.address || tr.wallet_address,
@@ -462,6 +530,8 @@ export class TokenAggregatorService {
         twitterUsername: tr.twitter_username || null,
         avatar: tr.avatar || null,
         usdValue: Math.round(usdVal * 100) / 100,
+        boughtUsd: Math.round(boughtUsd * 100) / 100,
+        buyTxCount,
         balance: Math.round(balance * 100) / 100,
         sellPercentage: Math.round(sellPct * 100) / 100,
         holdingPercent: Math.round(Math.max(0, 1 - sellPct) * 100),
@@ -492,11 +562,14 @@ export class TokenAggregatorService {
       const isSmart = tags.some(tag => tag.includes('smart')) || tagV2.includes('smart');
       const isKol = tags.some(tag => tag.includes('renowned') || tag.includes('kol')) || tagV2.includes('kol') || Boolean(t.twitter_username);
 
-      const usdVal = Number(t.usd_value || t.usdValue || 0);
+      const usdVal = Number(t.usd_value || t.usdValue || t.balance_usd || 0);
+      const boughtUsd = Number(t.total_cost || t.buy_volume_cur || t.cost_cur || t.boughtUsd || t.history_bought_cost || 0);
+      const buyTx = Number(t.buy_tx_count_cur || t.buy_tx_count || t.buyTxCount || t.tx_count || 0);
+      const hasBought = (boughtUsd > 0 || buyTx > 0 || Number(t.history_bought_amount || 0) > 0);
       const sellPct = Number(t.sell_amount_percentage ?? t.sellPercentage ?? 0);
 
-      // Must be currently holding with >= $50 USD value and not 100% sold out (sell < 1)
-      const isActiveHolder = usdVal >= 50 && sellPct < 1;
+      // Must be currently holding with >= $50 USD value, have actually bought with > $0, and not dumped
+      const isActiveHolder = usdVal >= 50 && sellPct < 0.99 && hasBought;
 
       if (isSmart && isActiveHolder) {
         activeSmartHolders.push(t);

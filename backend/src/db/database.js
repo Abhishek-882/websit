@@ -1,4 +1,4 @@
-﻿import fs from 'fs';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -10,6 +10,7 @@ const LOCAL_DB_FILE = path.join(DATA_DIR, 'local_db.json');
 // In-memory local state backed by JSON file
 let localDb = {
   trades: [],
+  limit_orders: [],
   session_wallets: [],
   bot_configs: {},
 };
@@ -23,6 +24,7 @@ function ensureLocalFile() {
       const content = fs.readFileSync(LOCAL_DB_FILE, 'utf-8');
       localDb = { ...localDb, ...JSON.parse(content) };
       if (!Array.isArray(localDb.trades)) localDb.trades = [];
+      if (!Array.isArray(localDb.limit_orders)) localDb.limit_orders = [];
       if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
       if (!localDb.bot_configs) localDb.bot_configs = {};
     } catch {
@@ -94,6 +96,65 @@ export async function closeTrade(tradeId, closeData = {}) {
     item.status = 'closed';
     item.closed_at = new Date().toISOString();
     Object.assign(item, closeData);
+    saveLocalFile();
+  }
+  return item;
+}
+
+// ── Limit Order helpers ──────────────────────────────────────────
+
+export async function createLimitOrder(order) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.limit_orders)) localDb.limit_orders = [];
+  const id = localDb.limit_orders.length + 1;
+  const item = {
+    id,
+    ...order,
+    status: 'pending', // 'pending', 'filled', 'cancelled'
+    created_at: new Date().toISOString(),
+    filled_at: null,
+  };
+  localDb.limit_orders.unshift(item);
+  saveLocalFile();
+  return item;
+}
+
+export async function getPendingLimitOrders(tokenAddress = null) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.limit_orders)) localDb.limit_orders = [];
+  return localDb.limit_orders.filter(
+    o => o.status === 'pending' && (!tokenAddress || o.tokenAddress === tokenAddress)
+  );
+}
+
+export async function hasPendingLimitOrder(tokenAddress, userWallet) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.limit_orders)) localDb.limit_orders = [];
+  return localDb.limit_orders.some(
+    o => o.tokenAddress === tokenAddress && o.userWallet === userWallet && o.status === 'pending'
+  );
+}
+
+export async function fillLimitOrder(orderId, fillData = {}) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.limit_orders)) localDb.limit_orders = [];
+  const item = localDb.limit_orders.find(o => o.id === orderId);
+  if (item) {
+    item.status = 'filled';
+    item.filled_at = new Date().toISOString();
+    Object.assign(item, fillData);
+    saveLocalFile();
+  }
+  return item;
+}
+
+export async function cancelLimitOrder(orderId) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.limit_orders)) localDb.limit_orders = [];
+  const item = localDb.limit_orders.find(o => o.id === orderId);
+  if (item) {
+    item.status = 'cancelled';
+    item.cancelled_at = new Date().toISOString();
     saveLocalFile();
   }
   return item;

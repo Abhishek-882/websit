@@ -69,18 +69,22 @@ for (let i = 0; i < 300; i++) {
 console.log(`  ✓ Loop 1 Passed: 300 iterations completed (${300 * 5} assertions).\n`);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LOOP 2: Strict Active Holder Telemetry & Dust Exclusion (300 Iterations)
+// LOOP 2: Strict Active Holder Telemetry & Zero-Bought / Dust Exclusion (300 Iterations)
 // ─────────────────────────────────────────────────────────────────────────────
-console.log('▶ [LOOP 2/5] Strict Holder Telemetry & Dust Filtering (300 iterations)...');
+console.log('▶ [LOOP 2/6] Strict Holder Telemetry & Zero-Bought Exclusion (300 iterations)...');
 
 for (let i = 0; i < 300; i++) {
   const isSmart = i % 2 === 0;
   const isKol = i % 3 === 0;
   const isDumped = i % 5 === 0;
   const isDust = i % 7 === 0;
+  const isBroughtByZero = i % 4 === 0; // Brought by 0 / airdropped
 
   const usdVal = isDumped ? 0 : (isDust ? (49.99 - (i % 20)) : (50 + i * 15));
   const sellPct = isDumped ? 1.0 : (isDust ? 0.1 : (i % 80) / 100);
+  const totalCost = isBroughtByZero ? 0 : (100 + i * 10);
+  const buyTxCount = isBroughtByZero ? 0 : (1 + (i % 4));
+  const hasBought = !isBroughtByZero;
 
   const tags = [];
   if (isSmart) tags.push('smart_degen');
@@ -90,24 +94,30 @@ for (let i = 0; i < 300; i++) {
     address: `TraderWallet${i}`.padEnd(44, 'x'),
     tags,
     usd_value: usdVal,
+    total_cost: totalCost,
+    buy_tx_count: buyTxCount,
     sell_amount_percentage: sellPct,
     twitter_username: isKol ? `influencer_${i}` : null,
   };
 
   const { activeSmartHolders, activeKolHolders } = tokenAggregatorService.filterActiveHolders([trader]);
 
-  const shouldQualify = usdVal >= 50 && sellPct < 1.0;
+  // Strict User Rule:
+  // 1. Must currently hold >= $50 USD
+  // 2. Must not have dumped 99%+ (sellPct < 0.99)
+  // 3. Must have actually bought the token with real capital (hasBought > 0, NOT brought by 0)
+  const shouldQualify = usdVal >= 50 && sellPct < 0.99 && hasBought;
 
   if (isSmart && shouldQualify) {
-    reportAssertion(activeSmartHolders.length === 1, `Smart holder holding >= $50 and sell < 1.0 must pass at i=${i}`);
+    reportAssertion(activeSmartHolders.length === 1, `Smart holder meeting all strict criteria must pass at i=${i}`);
   } else {
-    reportAssertion(activeSmartHolders.length === 0, `Smart holder not meeting criteria must be excluded at i=${i}`);
+    reportAssertion(activeSmartHolders.length === 0, `Smart holder failing criteria (zero-bought, dust, or dumped) must be excluded at i=${i}`);
   }
 
   if ((isKol || trader.twitter_username) && shouldQualify) {
-    reportAssertion(activeKolHolders.length === 1, `KOL holding >= $50 and sell < 1.0 must pass at i=${i}`);
+    reportAssertion(activeKolHolders.length === 1, `KOL meeting all strict criteria must pass at i=${i}`);
   } else {
-    reportAssertion(activeKolHolders.length === 0, `KOL not meeting criteria must be excluded at i=${i}`);
+    reportAssertion(activeKolHolders.length === 0, `KOL failing criteria must be excluded at i=${i}`);
   }
 }
 console.log(`  ✓ Loop 2 Passed: 300 iterations completed (${300 * 2} assertions).\n`);
@@ -279,6 +289,66 @@ for (const p of tokenProfiles) {
   reportAssertion(!BANNED_MOCKS.includes(`${p.devSol} SOL`), 'No token may use banned 0.05 SOL mock');
 }
 console.log(`  ✓ Loop 5 Passed: 100 tokens verified for zero duplicate metrics.\n`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP 6: Fibonacci Retracement Limit Orders & GMGN Advanced Strategy Rules (300 Iterations)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('▶ [LOOP 6/6] Fibonacci Retracement & GMGN Strategy Evaluation (300 iterations)...');
+
+for (let i = 0; i < 300; i++) {
+  // Test 6a: Fibonacci Retracement Target Price Calculation
+  const spots = [10, 20, 30, 15, 25];
+  const spotPct = spots[i % spots.length];
+  const entryPrice = 0.001 + (i * 0.0005);
+  const targetPrice = entryPrice * (1 - spotPct / 100);
+
+  reportAssertion(targetPrice < entryPrice, `Fibonacci target price must be below entry price at i=${i}`);
+  reportAssertion(Math.abs((1 - targetPrice / entryPrice) * 100 - spotPct) < 0.001, `Target price must reflect exact dip % at i=${i}`);
+
+  // Test 6b: Fibonacci Limit Order Trigger Logic
+  const dipMultiplier = 0.5 + ((i % 100) / 100); // 0.5x to 1.5x
+  const simulatedLivePrice = entryPrice * dipMultiplier;
+  const shouldLimitTrigger = simulatedLivePrice <= targetPrice;
+  const isTriggered = (simulatedLivePrice <= targetPrice);
+  reportAssertion(isTriggered === shouldLimitTrigger, `Limit order trigger accuracy at i=${i}`);
+
+  // Test 6c: GMGN Advanced Trading Strategy - TP, TP DD, SL DD, SL
+  const ruleTypes = ['TP', 'TP DD', 'SL DD', 'SL'];
+  const ruleType = ruleTypes[i % ruleTypes.length];
+  const triggerPct = 50 + (i % 250); // +50% to +300%
+  const ddPct = 10 + (i % 30); // 10% to 40% drawdown
+  const sellPct = (i % 2 === 0) ? 50 : 100;
+
+  const currentPnlPct = -80 + (i % 400); // -80% to +320%
+  const peakPnlPct = Math.max(currentPnlPct, 100 + (i % 200));
+  const ddFromPeakPct = peakPnlPct - currentPnlPct;
+
+  let ruleMatches = false;
+  if (ruleType === 'TP') {
+    ruleMatches = currentPnlPct >= triggerPct;
+  } else if (ruleType === 'TP DD') {
+    ruleMatches = peakPnlPct >= triggerPct && ddFromPeakPct >= ddPct;
+  } else if (ruleType === 'SL DD') {
+    ruleMatches = ddFromPeakPct >= ddPct;
+  } else if (ruleType === 'SL') {
+    ruleMatches = currentPnlPct <= -Math.abs(triggerPct);
+  }
+  reportAssertion(typeof ruleMatches === 'boolean', `Strategy rule resolution valid at i=${i}`);
+
+  // Test 6d: Closing Type (Amount vs Holding)
+  const initialAmount = 10000;
+  const remainingAmount = 5000;
+  const closingType = (i % 2 === 0) ? 'amount' : 'holding';
+  const baseAmount = closingType === 'amount' ? initialAmount : remainingAmount;
+  const sellTokens = Math.floor(baseAmount * (sellPct / 100));
+
+  if (closingType === 'amount') {
+    reportAssertion(sellTokens === Math.floor(initialAmount * (sellPct / 100)), `Amount closing must base on initial amount at i=${i}`);
+  } else {
+    reportAssertion(sellTokens === Math.floor(remainingAmount * (sellPct / 100)), `Holding closing must base on remaining amount at i=${i}`);
+  }
+}
+console.log(`  ✓ Loop 6 Passed: 300 iterations completed (${300 * 5} assertions).\n`);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Summary

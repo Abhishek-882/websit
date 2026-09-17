@@ -303,20 +303,33 @@ export default function TokenTable({
                     <span className="text-[11px] text-slate-500 italic">Scanning...</span>
                   ) : (
                     <div className="space-y-1">
-                      <div className="flex items-center gap-1">
-                        <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                          devFund.isDumped
-                            ? 'bg-rose-950 text-rose-300 border border-rose-800'
-                            : devFund.isCto
-                            ? 'bg-blue-950 text-blue-300 border border-blue-800'
-                            : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-                        }`}>
-                          {devFund.devStatus || 'Holding'}
-                        </span>
-                        {devFund.fundingSource && (
-                          <span className="text-[9px] text-slate-400 truncate max-w-[60px]" title={devFund.fundingSource}>
-                            {devFund.fundingSource}
+                      <div className="flex items-center justify-between gap-1">
+                        <div className="flex items-center gap-1">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                            devFund.isDumped
+                              ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                              : devFund.isCto
+                              ? 'bg-blue-950 text-blue-300 border border-blue-800'
+                              : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                          }`}>
+                            {devFund.devStatus || 'Holding'}
                           </span>
+                          {devFund.fundingSource && (
+                            <span className="text-[9px] text-slate-400 truncate max-w-[60px]" title={devFund.fundingSource}>
+                              {devFund.fundingSource}
+                            </span>
+                          )}
+                        </div>
+                        {(devFund.solscanUrl || devFund.devAddress) && (
+                          <a
+                            href={devFund.solscanUrl || `https://solscan.io/account/${devFund.devAddress}`}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="text-[9px] font-mono text-cyan-400 hover:text-cyan-300 transition-colors"
+                            title="Inspect Dev on Solscan"
+                          >
+                            Solscan ↗
+                          </a>
                         )}
                       </div>
                       <DevMoneyBar balance={devBal} currency={nativeCurrency} devBalanceUsd={devFund.devBalanceUsd} />
@@ -514,25 +527,38 @@ export default function TokenTable({
                         <span className="text-[11px] text-slate-400 italic">Scanning...</span>
                       ) : (
                         <div className="space-y-1">
-                          <div className="flex items-center gap-1.5">
-                            {devFund.isCexFunded ? (
-                              <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-800/80">
-                                {devFund.fundingSource}
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              {devFund.isCexFunded ? (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-800/80">
+                                  {devFund.fundingSource}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {devFund.fundingSource || 'Direct'}
+                                </span>
+                              )}
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                                devFund.isDumped
+                                  ? 'bg-rose-950/80 text-rose-300 border border-rose-800/80'
+                                  : devFund.isCto
+                                  ? 'bg-blue-950/80 text-blue-300 border border-blue-800/80'
+                                  : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/80'
+                              }`}>
+                                {devFund.devStatus || 'Holding'}
                               </span>
-                            ) : (
-                              <span className="text-[10px] text-slate-400 font-mono">
-                                {devFund.fundingSource || 'Direct'}
-                              </span>
+                            </div>
+                            {(devFund.solscanUrl || devFund.devAddress) && (
+                              <a
+                                href={devFund.solscanUrl || `https://solscan.io/account/${devFund.devAddress}`}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                                className="text-[9px] font-mono text-cyan-400 hover:text-cyan-300 transition-colors inline-flex items-center"
+                                title="Inspect Dev Wallet on Solscan"
+                              >
+                                Solscan ↗
+                              </a>
                             )}
-                            <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
-                              devFund.isDumped
-                                ? 'bg-rose-950/80 text-rose-300 border border-rose-800/80'
-                                : devFund.isCto
-                                ? 'bg-blue-950/80 text-blue-300 border border-blue-800/80'
-                                : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/80'
-                            }`}>
-                              {devFund.devStatus || 'Holding'}
-                            </span>
                           </div>
                           {/* User Directive: Money in Dev Wallet Bar */}
                           <DevMoneyBar balance={devBal} currency={nativeCurrency} devBalanceUsd={devFund.devBalanceUsd} />

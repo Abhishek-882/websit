@@ -1,4 +1,5 @@
 import { Connection, PublicKey } from '@solana/web3.js';
+import { solscanService } from './solscan.service.js';
 
 const RPC_URL = process.env.SOLANA_RPC_URL || 'https://solana-rpc.publicnode.com';
 
@@ -223,11 +224,25 @@ export class DevFundService {
       devAddress = await this.resolveCreatorFromMint(mintAddress);
     }
 
-    const rawFundFrom = gmgnDevInfo?.fund_from || null;
-    const rawFundAmount = gmgnDevInfo?.fund_amount || null;
+    // Audit dev funds via Solscan API when devAddress is available
+    let solscanData = null;
+    if (devAddress) {
+      try {
+        solscanData = await solscanService.checkDevFunds(devAddress);
+      } catch {
+        // Handled gracefully
+      }
+    }
+
+    const rawFundFrom = solscanData?.fundingFrom || gmgnDevInfo?.fund_from || null;
+    const rawFundAmount = solscanData?.fundingAmountSol || gmgnDevInfo?.fund_amount || null;
 
     const funding = this.classifyFundingSource(rawFundFrom, rawFundAmount);
-    const solBalance = devAddress ? await this.getDevSolBalance(devAddress) : null;
+    
+    // Prefer Solscan/RPC verified balance
+    let solBalance = (solscanData && typeof solscanData.devBalanceSol === 'number')
+      ? solscanData.devBalanceSol
+      : (devAddress ? await this.getDevSolBalance(devAddress) : null);
     
     // Compute USD balance from live on-chain SOL or CEX funding amount
     let devBalanceUsd = null;
@@ -265,6 +280,8 @@ export class DevFundService {
       devStatus: statusLabel,
       isDumped,
       isCto,
+      solscanUrl: devAddress ? `https://solscan.io/account/${devAddress}` : null,
+      solscanVerified: Boolean(solscanData?.isVerified),
     };
   }
 }

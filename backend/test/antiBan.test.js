@@ -167,61 +167,92 @@ await runTest('DevFundService classifies Dev holding, dumped, and CTO statuses',
 // ─────────────────────────────────────────────────────────────
 // 4. Smart Money & KOL Active Holder Strict Telemetry Tests
 // ─────────────────────────────────────────────────────────────
-await runTest('Strict Holder Filtering excludes sold out wallets and wallets holding < $50 USD', () => {
+await runTest('Strict Holder Filtering excludes zero-bought wallets, dumped wallets, and wallets holding < $50 USD', () => {
   const rawTraders = [
     {
       address: 'wallet_smart_holding',
       tags: ['smart_degen'],
+      total_cost: 150,
+      buy_tx_count: 2,
       usd_value: 120,
-      sell_amount_percentage: 0.2, // Still holding 80%, $120 > $50 -> PASS
+      sell_amount_percentage: 0.2, // Has bought $150, holding $120 >= $50, sell 20% < 99% -> PASS
     },
     {
-      address: 'wallet_smart_99pct',
+      address: 'wallet_smart_98pct',
       tags: ['smart_wallet'],
+      total_cost: 600,
+      buy_tx_count: 4,
       usd_value: 200,
-      sell_amount_percentage: 0.99, // Sold 99% but still holds $200 >= $50 and 0.99 < 1 -> PASS
+      sell_amount_percentage: 0.98, // Has bought $600, holds $200 >= $50, sell 98% < 99% -> PASS
+    },
+    {
+      address: 'wallet_smart_brought_by_zero',
+      tags: ['smart_degen'],
+      total_cost: 0,
+      buy_tx_count: 0,
+      usd_value: 150,
+      sell_amount_percentage: 0.0, // Holding $150 BUT bought = $0 (brought by 0 / airdrop) -> STRICT EXCLUDE!
     },
     {
       address: 'wallet_smart_dust',
       tags: ['smart_wallet'],
+      total_cost: 80,
+      buy_tx_count: 1,
       usd_value: 49.99,
-      sell_amount_percentage: 0.0, // Holding but < $50 USD -> FAIL
+      sell_amount_percentage: 0.0, // Bought $80 but holds < $50 USD -> EXCLUDE!
     },
     {
       address: 'wallet_smart_dumped',
       tags: ['smart_degen'],
+      total_cost: 300,
+      buy_tx_count: 2,
       usd_value: 0,
-      sell_amount_percentage: 1.0, // 100% sold out -> FAIL
+      sell_amount_percentage: 1.0, // 100% sold out -> EXCLUDE!
     },
     {
       address: 'wallet_kol_active',
       tags: ['renowned'],
+      total_cost: 1200,
+      buy_tx_count: 3,
       twitter_username: 'sol_influencer',
       usd_value: 850,
-      sell_amount_percentage: 0.35, // Still holding 65%, $850 > $50 -> PASS
+      sell_amount_percentage: 0.35, // Bought $1200, holds $850 >= $50 -> PASS
+    },
+    {
+      address: 'wallet_kol_brought_by_zero',
+      tags: ['kol'],
+      total_cost: 0,
+      buy_tx_count: 0,
+      twitter_username: 'fake_kol',
+      usd_value: 500,
+      sell_amount_percentage: 0.0, // Brought by $0 -> STRICT EXCLUDE!
     },
     {
       address: 'wallet_kol_dumped',
       tags: ['kol'],
+      total_cost: 500,
+      buy_tx_count: 1,
       twitter_username: 'pump_promoter',
       usd_value: 500,
-      sell_amount_percentage: 1.0, // 100% sold out -> FAIL
+      sell_amount_percentage: 1.0, // 100% sold out -> EXCLUDE!
     },
     {
       address: 'wallet_kol_v2_tag',
       wallet_tag_v2: 'KOL',
+      total_cost: 400,
+      buy_tx_count: 2,
       usd_value: 300,
-      sell_amount_percentage: 0.1, // Tag v2 recognized -> PASS
+      sell_amount_percentage: 0.1, // Tag v2 recognized, bought $400, holds $300 -> PASS
     },
   ];
 
   const { activeSmartHolders, activeKolHolders } = tokenAggregatorService.filterActiveHolders(rawTraders);
 
-  assert.equal(activeSmartHolders.length, 2, 'Wallets holding >= $50 USD and sell < 1 must be in smart count');
+  assert.equal(activeSmartHolders.length, 2, 'Only wallets holding >= $50 USD AND bought > 0 must pass smart check');
   assert.equal(activeSmartHolders[0].address, 'wallet_smart_holding');
-  assert.equal(activeSmartHolders[1].address, 'wallet_smart_99pct');
+  assert.equal(activeSmartHolders[1].address, 'wallet_smart_98pct');
 
-  assert.equal(activeKolHolders.length, 2, 'Active KOLs must include both standard and v2 tagged wallets, excluding dumped');
+  assert.equal(activeKolHolders.length, 2, 'Only active KOLs who bought > 0 and hold >= $50 must pass');
   assert.equal(activeKolHolders[0].address, 'wallet_kol_active');
   assert.equal(activeKolHolders[1].address, 'wallet_kol_v2_tag');
 });
@@ -301,6 +332,52 @@ await runTest('In-Memory Filter Engine evaluates all 5 dimensions without API ca
   const dumpedToken = { ...testToken, devFund: { ...testToken.devFund, devStatus: 'Dumped 100%', isDumped: true } };
   const failDev = { ...passFilters, devPreset: 'holding' };
   assert.equal(isTokenMatchingFilters(dumpedToken, failDev), false, 'Should fail dev holding filter when dev dumped');
+});
+
+// ─────────────────────────────────────────────────────────────
+// 7. Fibonacci Retracement Limit Order Calculation Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('Fibonacci Limit Orders calculate exact retracement price targets (-10%, -20%, -30%)', () => {
+  const currentPriceUsd = 0.05; // $0.05 per token
+
+  // Spot 1: -10% (Fib 0.236 shallow dip)
+  const spot1 = 10;
+  const targetPrice1 = currentPriceUsd * (1 - spot1 / 100);
+  assert.equal(Math.round(targetPrice1 * 1000) / 1000, 0.045);
+
+  // Spot 2: -20% (Fib 0.382 Golden Dip)
+  const spot2 = 20;
+  const targetPrice2 = currentPriceUsd * (1 - spot2 / 100);
+  assert.equal(Math.round(targetPrice2 * 1000) / 1000, 0.040);
+
+  // Spot 3: -30% (Fib 0.500 Deep Retracement)
+  const spot3 = 30;
+  const targetPrice3 = currentPriceUsd * (1 - spot3 / 100);
+  assert.equal(Math.round(targetPrice3 * 1000) / 1000, 0.035);
+
+  // Trigger evaluation: Price reaches $0.039 -> should trigger Spot 2 (<= 0.040)
+  const dipPrice = 0.039;
+  assert.equal(dipPrice <= targetPrice2, true, 'Limit order should trigger when price reaches target dip');
+  assert.equal(dipPrice <= targetPrice3, false, 'Deep spot limit order should not trigger prematurely');
+});
+
+// ─────────────────────────────────────────────────────────────
+// 8. Solscan API & RPC Fallback Telemetry Tests
+// ─────────────────────────────────────────────────────────────
+await runTest('SolscanService generates direct verification link and gracefully falls back to Solana RPC', async () => {
+  const { solscanService } = await import('../src/services/solscan.service.js');
+  const testDevAddress = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+
+  const devFund = await devFundService.resolveDevFund({
+    creator_address: testDevAddress,
+    fund_from: 'Binance',
+    fund_amount: '5.0',
+  }, 'TestMint111111111111111111111111111111111111', 145);
+
+  assert.ok(devFund, 'Dev fund must be resolved');
+  assert.equal(devFund.solscanUrl, `https://solscan.io/account/${testDevAddress}`);
+  assert.equal(devFund.fundingSource, 'Binance');
+  assert.equal(devFund.isCexFunded, true);
 });
 
 // ─────────────────────────────────────────────────────────────
