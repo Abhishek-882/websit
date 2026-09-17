@@ -6,10 +6,10 @@
   "type": "module",
   "scripts": {
     "start": "node backend/src/index.js",
-    "postinstall": "npm install --prefix backend && npm install --prefix frontend",
+    "postinstall": "npm install --prefix backend",
     "dev:backend": "node --watch backend/src/index.js",
     "dev:frontend": "npm run dev --prefix frontend",
-    "build:frontend": "npm run build --prefix frontend && npm run deploy:frontend",
+    "build:frontend": "cd frontend && npm install --legacy-peer-deps && npm run build && cd .. && npm run deploy:frontend",
     "deploy:frontend": "node -e \"import fs from 'fs'; fs.cpSync('frontend/dist', 'backend/public', { recursive: true, force: true });\"",
     "build": "npm run build:frontend",
     "test": "npm test --prefix backend"

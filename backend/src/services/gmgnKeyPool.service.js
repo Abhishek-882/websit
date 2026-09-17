@@ -107,10 +107,12 @@ export class GMGNKeyPool {
         throw new Error(`GMGN IP cooldown active (${remainingSec}s remaining)`);
       }
 
-      // Enforce strict serialized pacing delay between consecutive requests
+      // Enforce strict serialized pacing delay + randomized jitter between consecutive requests
       const timeSinceLast = Date.now() - (this.lastRequestTimestamp || 0);
-      if (timeSinceLast < this.pacingDelayMs) {
-        await new Promise(r => setTimeout(r, this.pacingDelayMs - timeSinceLast));
+      const jitterMs = Math.floor(Math.random() * 250) + 100; // 100-350ms anti-fingerprinting jitter
+      const minDelay = this.pacingDelayMs + jitterMs;
+      if (timeSinceLast < minDelay) {
+        await new Promise(r => setTimeout(r, minDelay - timeSinceLast));
       }
       this.lastRequestTimestamp = Date.now();
 

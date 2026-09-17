@@ -14,7 +14,7 @@ export class TokenAggregatorService {
     this.timer = null;
     this.fastTickerTimer = null;
     this.cacheTtlMs = 10 * 60 * 1000; // 10 minutes cache TTL
-    this.maxGmgnEnrichmentsPerCycle = 6; // Rate-safe limit per cycle
+    this.maxGmgnEnrichmentsPerCycle = 3; // Rate-safe limit per cycle (max 3 tokens = <=6 calls/min)
     this.solPriceUsd = 145; // Live SOL price in USD
   }
 
@@ -32,13 +32,13 @@ export class TokenAggregatorService {
       this.runScanCycle().catch(err => console.warn('[Token Aggregator] Periodic scan notice:', err.message));
     }, this.scanIntervalMs);
 
-    // 3. Start ultra-low-latency 3.5s GMGN market cap & price fast ticker
+    // 3. Start sustainable 12s GMGN market cap & price fast ticker
     this.startFastTicker();
   }
 
   startFastTicker() {
     if (this.fastTickerTimer) return;
-    console.log(`[Token Aggregator] ⚡ Ultra-low latency 3.5s GMGN Solana market cap ticker active.`);
+    console.log(`[Token Aggregator] ⚡ Sustainable 12s GMGN Solana market cap ticker active.`);
     
     this.fastTickerTimer = setInterval(async () => {
       try {
@@ -47,7 +47,7 @@ export class TokenAggregatorService {
       } catch (err) {
         // Ticker pass-through
       }
-    }, 3500);
+    }, 12000);
   }
 
   async syncFastTicker() {
@@ -257,8 +257,15 @@ export class TokenAggregatorService {
 
       for (const token of needEnrichment) {
         if (!gmgnKeyPool.isAvailable()) {
-          console.warn(`[Token Aggregator] GMGN Key Pool cooldown active. Skipping remaining SOL tokens.`);
-          break;
+          console.warn(`[Token Aggregator] GMGN Key Pool cooldown active (${gmgnKeyPool.getCooldownRemainingSec()}s). Gracefully maintaining on-chain telemetry for $${token.symbol}.`);
+          try {
+            if (!token.devFund) {
+              const devFund = await devFundService.resolveDevFund({}, token.address, this.solPriceUsd);
+              token.devFund = devFund;
+            }
+            token.enrichedAt = Date.now();
+          } catch {}
+          continue;
         }
 
         try {
@@ -337,7 +344,14 @@ export class TokenAggregatorService {
           await this.evaluateAutoBuyTriggers(token);
 
         } catch (enrichErr) {
-          console.warn(`[Token Aggregator] Enrichment error for $${token.symbol}:`, enrichErr.message);
+          console.warn(`[Token Aggregator] Enrichment notice for $${token.symbol}:`, enrichErr.message);
+          try {
+            if (!token.devFund) {
+              const devFund = await devFundService.resolveDevFund({}, token.address, this.solPriceUsd);
+              token.devFund = devFund;
+            }
+            token.enrichedAt = Date.now();
+          } catch {}
         }
       }
     } catch (err) {
