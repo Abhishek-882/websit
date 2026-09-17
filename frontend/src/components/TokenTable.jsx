@@ -1,4 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
+import {
+  IconDiamond,
+  IconMegaphone,
+  IconBolt,
+  IconCheck,
+  IconCopy,
+  IconExternal,
+} from './Icons';
 
 function formatCurrency(val) {
   if (val === null || val === undefined || isNaN(val)) return '--';
@@ -67,8 +75,16 @@ function MarketCapDisplay({ token }) {
         <span className={`font-mono font-black text-sm px-1 py-0.5 rounded transition-all duration-500 ${flashBg}`}>
           {formatCurrency(mcap)}
         </span>
-        {direction === 'up' && <span className="text-emerald-400 text-xs font-bold animate-pulse">▲</span>}
-        {direction === 'down' && <span className="text-rose-400 text-xs font-bold animate-pulse">▼</span>}
+        {direction === 'up' && (
+          <svg className="w-2.5 h-2.5 text-emerald-400 animate-pulse inline" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="12 4 22 20 2 20" />
+          </svg>
+        )}
+        {direction === 'down' && (
+          <svg className="w-2.5 h-2.5 text-rose-400 animate-pulse inline" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="12 20 2 4 22 4" />
+          </svg>
+        )}
       </div>
       <div className="flex items-center gap-1 text-[10px] font-mono text-slate-400">
         <span>
@@ -201,10 +217,14 @@ export default function TokenTable({
                       <span>{token.address.slice(0, 4)}...{token.address.slice(-4)}</span>
                       <button
                         onClick={e => handleCopy(token.address, e)}
-                        className="text-cyan-400 hover:text-white"
+                        className="text-cyan-400 hover:text-white p-0.5"
                         title="Copy Contract Address"
                       >
-                        {copiedAddress === token.address ? '✓ Copied' : '📋'}
+                        {copiedAddress === token.address ? (
+                          <IconCheck className="w-3 h-3 text-emerald-400 inline" />
+                        ) : (
+                          <IconCopy className="w-3 h-3 text-slate-400 hover:text-white inline" />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -222,10 +242,11 @@ export default function TokenTable({
                         e.stopPropagation();
                         onQuickBuy && onQuickBuy(token);
                       }}
-                      className="px-2 py-0.5 rounded bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-black text-[10px] shadow-sm hover:brightness-110 active:scale-95 transition-all"
+                      className="px-2 py-0.5 rounded bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-black text-[10px] shadow-sm hover:brightness-110 active:scale-95 transition-all flex items-center gap-0.5"
                       title="Quick Buy"
                     >
-                      ⚡ Buy
+                      <IconBolt className="w-2.5 h-2.5 inline" />
+                      <span>Buy</span>
                     </button>
                     <a
                       href={gmgnLink}
@@ -265,8 +286,9 @@ export default function TokenTable({
                     <span className="text-[11px] text-slate-500 italic">Scanning...</span>
                   ) : (
                     <div className="font-mono">
-                      <span className="font-black text-xs text-white">
-                        💎 {token.smartMoneyCount} holding
+                      <span className="font-bold text-xs text-white flex items-center gap-1">
+                        <IconDiamond className="w-3 h-3 text-emerald-400" />
+                        <span>{token.smartMoneyCount} holding</span>
                       </span>
                       {token.smartMoneySoldCount > 0 && (
                         <span className="text-[10px] text-slate-400 block">
@@ -284,8 +306,9 @@ export default function TokenTable({
                     <span className="text-[11px] text-slate-500 italic">Scanning...</span>
                   ) : (
                     <div className="font-mono">
-                      <span className="font-black text-xs text-purple-300">
-                        📣 {token.kolCount} holding
+                      <span className="font-bold text-xs text-purple-300 flex items-center gap-1">
+                        <IconMegaphone className="w-3 h-3 text-purple-400" />
+                        <span>{token.kolCount} holding</span>
                       </span>
                       {token.kolSoldCount > 0 && (
                         <span className="text-[10px] text-slate-400 block">
@@ -423,11 +446,9 @@ export default function TokenTable({
                                 title="Copy Contract Address"
                               >
                                 {copiedAddress === token.address ? (
-                                  <span className="text-emerald-400 text-[10px] font-bold">✓</span>
+                                  <IconCheck className="w-3 h-3 text-emerald-400" />
                                 ) : (
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                  </svg>
+                                  <IconCopy className="w-3 h-3" />
                                 )}
                               </button>
                             </div>
@@ -465,8 +486,8 @@ export default function TokenTable({
                         <span className="text-[11px] text-slate-400 italic">Scanning...</span>
                       ) : smartCount > 0 ? (
                         <div>
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/70 border border-emerald-800/80 text-emerald-300 font-bold text-xs font-mono">
-                            <span>💎</span>
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-950/70 border border-emerald-800/80 text-emerald-300 font-bold text-xs font-mono">
+                            <IconDiamond className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                             <span>{smartCount} holding</span>
                             {token.smartMoneySoldCount > 0 && (
                               <span className="text-slate-400 font-normal text-[10px]">· {token.smartMoneySoldCount} sold</span>
@@ -496,8 +517,8 @@ export default function TokenTable({
                         <span className="text-[11px] text-slate-400 italic">Scanning...</span>
                       ) : kolCount > 0 ? (
                         <div>
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-950/70 border border-purple-800/80 text-purple-300 font-bold text-xs font-mono">
-                            <span>📣</span>
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-purple-950/70 border border-purple-800/80 text-purple-300 font-bold text-xs font-mono">
+                            <IconMegaphone className="w-3.5 h-3.5 text-purple-400 shrink-0" />
                             <span>{kolCount} holding</span>
                             {token.kolSoldCount > 0 && (
                               <span className="text-slate-400 font-normal text-[10px]">· {token.kolSoldCount} sold</span>
@@ -584,10 +605,11 @@ export default function TokenTable({
                             e.stopPropagation();
                             onQuickBuy && onQuickBuy(token);
                           }}
-                          className="px-2.5 py-1 rounded bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-black text-[11px] font-mono shadow-sm transition-all active:scale-95"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-slate-950 font-black text-[11px] font-mono shadow-sm transition-all active:scale-95"
                           title={`Quick Buy $${token.symbol} via Jupiter`}
                         >
-                          ⚡ Buy
+                          <IconBolt className="w-3 h-3 shrink-0" />
+                          <span>Buy</span>
                         </button>
                         <a
                           href={dexLink}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { IconSignal } from './Icons';
 
 function formatCurrency(val) {
   if (val === null || val === undefined || isNaN(val)) return '--';
@@ -11,7 +12,7 @@ export default function ToastContainer({ activeToast, onDismiss, onView }) {
   if (!activeToast) return null;
 
   const { token, title, message } = activeToast;
-  const cleanTitle = (title || `New Match: $${token?.symbol || 'TOKEN'}`).replace(/^🔥\s*/, '');
+  const cleanTitle = (title || `Signal Match: $${token?.symbol || 'TOKEN'}`).replace(/^🔥\s*/, '');
 
   return (
     <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-5 sm:max-w-sm z-50 animate-bounce-in">
@@ -20,7 +21,7 @@ export default function ToastContainer({ activeToast, onDismiss, onView }) {
         {/* Top: Header with close */}
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="flex items-center gap-2">
-            <span className="text-base">🔥</span>
+            <IconSignal className="w-4 h-4 text-cyan-400 shrink-0" />
             <h4 className="text-xs font-bold text-white tracking-wide">
               {cleanTitle}
             </h4>

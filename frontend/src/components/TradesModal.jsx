@@ -1,6 +1,14 @@
 import React, { useState } from 'react';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
+import {
+  IconOrders,
+  IconRefresh,
+  IconClose,
+  IconBolt,
+  IconDocument,
+  IconExternal,
+} from './Icons';
 
 export default function TradesModal({ isOpen, onClose }) {
   const trades = useBotStore(s => s.trades);
@@ -44,7 +52,7 @@ export default function TradesModal({ isOpen, onClose }) {
         slippageBps: 500,
       });
       if (res.success) {
-        setFeedback(`✓ Purchased! Tx: ${res.txSignature?.slice(0, 8)}...`);
+        setFeedback(`Purchased successfully! Tx: ${res.txSignature?.slice(0, 8)}...`);
         setManualAddress('');
         refreshTrades();
       } else {
@@ -90,8 +98,8 @@ export default function TradesModal({ isOpen, onClose }) {
         {/* Header */}
         <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-gradient-to-tr from-purple-500 to-indigo-500 text-slate-950 font-bold text-lg">
-              💼
+            <div className="p-2 rounded-xl bg-gradient-to-tr from-purple-500 to-indigo-500 text-slate-950 font-bold">
+              <IconOrders className="w-5 h-5 text-slate-950" />
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
@@ -108,16 +116,18 @@ export default function TradesModal({ isOpen, onClose }) {
           <div className="flex items-center gap-2">
             <button
               onClick={refreshTrades}
-              className="px-2.5 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
               title="Refresh Trades"
             >
-              🔄 Refresh
+              <IconRefresh className="w-3.5 h-3.5 text-slate-400" />
+              <span>Refresh</span>
             </button>
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              aria-label="Close modal"
             >
-              ✕
+              <IconClose className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -147,9 +157,10 @@ export default function TradesModal({ isOpen, onClose }) {
             <button
               type="submit"
               disabled={isBuying || !connectedWallet}
-              className="px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition-all disabled:opacity-50 shrink-0"
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition-all disabled:opacity-50 shrink-0"
             >
-              {isBuying ? 'Buying...' : '⚡ Quick Buy'}
+              <IconBolt className="w-3.5 h-3.5 shrink-0" />
+              <span>{isBuying ? 'Buying...' : 'Quick Buy'}</span>
             </button>
           </div>
         </form>
@@ -167,7 +178,7 @@ export default function TradesModal({ isOpen, onClose }) {
           </div>
         ) : trades.length === 0 ? (
           <div className="py-12 text-center bg-[#090d16] rounded-xl border border-slate-800 space-y-2">
-            <div className="text-3xl">📜</div>
+            <IconDocument className="w-8 h-8 mx-auto text-slate-600" />
             <h3 className="text-sm font-bold text-white">No trades executed yet</h3>
             <p className="text-xs text-slate-400 max-w-sm mx-auto">
               Activate the bot, fund your session wallet, and trades will automatically execute when tokens pass your criteria.
@@ -235,9 +246,10 @@ export default function TradesModal({ isOpen, onClose }) {
                               href={`https://solscan.io/tx/${trade.tx_signature}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-cyan-400 hover:underline text-[11px]"
+                              className="inline-flex items-center gap-1 text-cyan-400 hover:underline text-[11px]"
                             >
-                              {shortSig} ↗
+                              <span>{shortSig}</span>
+                              <IconExternal className="w-2.5 h-2.5" />
                             </a>
                           )}
                           {isOpen && (

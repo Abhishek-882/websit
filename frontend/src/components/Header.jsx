@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import WalletConnector from './WalletConnector';
 import {
+  IconRadar,
+  IconBot,
+  IconOrders,
+  IconSolana,
+  IconDownload,
+  IconBell,
+  IconVolume,
+  IconVolumeX,
+} from './Icons';
+import {
   isNotificationSupported,
   getNotificationPermission,
   requestNotificationPermission,
@@ -68,52 +78,52 @@ export default function Header({
     <header className="sticky top-0 z-40 bg-[#0b0f19]/95 backdrop-blur-md border-b border-slate-800/80 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 shadow-lg">
       <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center md:justify-between gap-2.5 sm:gap-3">
         
-        {/* Left: Brand, Cat Logo & Network Lock */}
+        {/* Left: Brand, Icon & Network Lock */}
         <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2.5 sm:gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-cyan-500 via-emerald-400 to-purple-500 p-[1.5px] shadow-sm flex items-center justify-center overflow-hidden">
-              <img src="/cat-icon.svg" alt="Meme Cat" className="h-full w-full object-cover rounded-[10px]" />
+            <div className="h-9 w-9 rounded-xl bg-slate-900 border border-slate-700/80 p-1.5 shadow-sm flex items-center justify-center text-cyan-400">
+              <IconRadar className="w-5 h-5 text-cyan-400" />
             </div>
             <div>
               <div className="flex items-center gap-1.5 sm:gap-2">
-                <h1 className="text-lg font-black text-white tracking-tight flex items-center gap-1">
-                  <span>Meme Cat</span>
-                  <span className="text-cyan-400 text-xs font-bold px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-800/60">
-                    Radar 🐾
+                <h1 className="text-base sm:text-lg font-black text-white tracking-tight flex items-center gap-1.5 font-mono">
+                  <span>SOLANA RADAR</span>
+                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/80 tracking-wider">
+                    PRO TERMINAL
                   </span>
                 </h1>
               </div>
-              <p className="text-[11px] text-slate-400 hidden xs:flex items-center gap-1.5">
-                <span>Autonomous Solana Scanner</span>
+              <p className="text-[11px] text-slate-400 hidden xs:flex items-center gap-1.5 font-mono">
+                <span>Live DEX Telemetry</span>
                 <span className="text-slate-600">•</span>
-                <span className="text-emerald-400">Paced Trading Bot</span>
+                <span className="text-emerald-400">Automated Trading Bot</span>
               </p>
             </div>
           </div>
 
           {/* Locked to Solana Network Only */}
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/70 border border-purple-800/80 text-purple-300 text-xs font-mono font-bold shadow-sm">
-            <span className="h-2 w-2 rounded-full bg-purple-400 animate-pulse" />
-            <span>🟣 Solana Only</span>
+            <IconSolana className="w-3.5 h-3.5 text-purple-300" />
+            <span>Solana Mainnet</span>
           </div>
 
           {/* Quick Bot & Trades Nav Buttons */}
           <div className="flex items-center gap-1.5">
             <button
               onClick={onOpenBotModal}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-950/80 border border-cyan-700/80 text-cyan-300 hover:bg-cyan-900/80 text-xs font-bold transition-all shadow-sm active:scale-95"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-950/80 border border-cyan-700/80 text-cyan-300 hover:bg-cyan-900/80 text-xs font-bold transition-all shadow-sm active:scale-95 font-mono"
               title="Open Solana Trading Bot Control Center"
             >
-              <span>🤖</span>
+              <IconBot className="w-3.5 h-3.5 text-cyan-400" />
               <span className="hidden sm:inline">Bot</span>
             </button>
 
             <button
               onClick={onOpenTradesModal}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-200 text-xs font-bold transition-all shadow-sm active:scale-95"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-200 text-xs font-bold transition-all shadow-sm active:scale-95 font-mono"
               title="Open Active Positions & Trade History"
             >
-              <span>💼</span>
+              <IconOrders className="w-3.5 h-3.5 text-slate-300" />
               <span className="hidden sm:inline">Trades</span>
               {tradesCount > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full bg-emerald-500 text-slate-950 text-[10px] font-black">
@@ -127,24 +137,24 @@ export default function Header({
         {/* Center: Live Ticker */}
         <div className="flex items-center justify-between sm:justify-center gap-2 px-3 py-1 rounded-lg bg-slate-900/90 border border-slate-800 shadow-inner">
           <div className="flex items-center gap-2">
-            <span className="relative flex h-2.5 w-2.5">
+            <span className="relative flex h-2 w-2">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
                 isScanning ? 'bg-amber-400' : 'bg-emerald-400'
               }`}></span>
-              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${
                 isScanning ? 'bg-amber-500' : 'bg-emerald-500'
               }`}></span>
             </span>
             <span className="text-xs font-mono font-medium text-slate-200">
               {isScanning ? (
-                <span className="text-amber-300">● Scanning Solana DEX...</span>
+                <span className="text-amber-300">Scanning Solana DEX...</span>
               ) : (
-                <span className="text-slate-300">● Live | {formatAgoString()}</span>
+                <span className="text-slate-300">Live | {formatAgoString()}</span>
               )}
             </span>
             <span className="hidden xl:inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 bg-emerald-950/70 border border-emerald-800/80 px-2 py-0.5 rounded-full shadow-sm">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>GMGN Live (3.5s)</span>
+              <span>GMGN Telemetry Active</span>
             </span>
           </div>
 
@@ -164,10 +174,10 @@ export default function Header({
           {canInstall && (
             <button
               onClick={onInstallApp}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-gradient-to-r from-pink-600 via-rose-600 to-amber-500 text-white font-black text-xs shadow-lg hover:brightness-110 active:scale-95 transition-all animate-bounce"
-              title="Install Meme Cat App on your device Home Screen"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs shadow-sm active:scale-95 transition-all"
+              title="Install App on your device Home Screen"
             >
-              <span>📲</span>
+              <IconDownload className="w-3.5 h-3.5 text-cyan-400" />
               <span>Install App</span>
             </button>
           )}
@@ -184,12 +194,12 @@ export default function Header({
                     ? 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/50'
                     : notifPermission === 'denied'
                     ? 'bg-slate-900 border-slate-700 text-slate-500 cursor-not-allowed'
-                    : 'bg-amber-950/40 border-amber-700/60 text-amber-300 hover:bg-amber-900/50 animate-pulse'
+                    : 'bg-amber-950/40 border-amber-700/60 text-amber-300 hover:bg-amber-900/50'
                 }`}
               >
-                <span>🔔</span>
+                <IconBell className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">
-                  {notifPermission === 'granted' ? 'Phone Alerts On' : 'Enable Phone Alerts'}
+                  {notifPermission === 'granted' ? 'Alerts Active' : 'Enable Alerts'}
                 </span>
                 <span className="sm:hidden">Alerts</span>
               </button>
@@ -219,18 +229,13 @@ export default function Header({
           >
             {soundMuted ? (
               <>
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                </svg>
+                <IconVolumeX className="w-3.5 h-3.5" />
                 <span>Muted</span>
               </>
             ) : (
               <>
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                </svg>
-                <span>Chime On</span>
+                <IconVolume className="w-3.5 h-3.5" />
+                <span>Audio On</span>
               </>
             )}
           </button>

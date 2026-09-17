@@ -4,6 +4,7 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
+import { IconClose } from './Icons';
 
 export default function WalletConnector() {
   const { setVisible } = useWalletModal();
@@ -102,9 +103,10 @@ export default function WalletConnector() {
         <button
           onClick={disconnect}
           title="Disconnect Wallet"
-          className="text-slate-400 hover:text-rose-400 text-xs ml-1 transition-colors px-1"
+          className="text-slate-400 hover:text-rose-400 p-1 transition-colors"
+          aria-label="Disconnect Wallet"
         >
-          ✕
+          <IconClose className="w-3.5 h-3.5" />
         </button>
       </div>
     </div>

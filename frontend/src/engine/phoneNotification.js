@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Meme Cat Phone & Desktop Chrome Notification Service
  * 
  * Supports:
@@ -47,7 +47,7 @@ export async function requestNotificationPermission() {
   }
 }
 
-export async function showTokenNotification(token, title = 'New Meme Cat Match! 🐾') {
+export async function showTokenNotification(token, title = 'Solana Radar Match') {
   if (getNotificationPermission() !== 'granted') return false;
 
   const targetUrl = token?.gmgnUrl || token?.url || '/';
@@ -60,9 +60,9 @@ export async function showTokenNotification(token, title = 'New Meme Cat Match! 
       if (reg && reg.showNotification) {
         await reg.showNotification(title, {
           body: bodyText,
-          icon: '/cat-icon.svg',
-          badge: '/cat-icon.svg',
-          tag: `meme-cat-${token?.address || Date.now()}`,
+          icon: '/favicon.svg',
+          badge: '/favicon.svg',
+          tag: `sol-radar-${token?.address || Date.now()}`,
           renotify: true,
           vibrate: [200, 100, 200],
           data: { url: targetUrl },
@@ -75,7 +75,7 @@ export async function showTokenNotification(token, title = 'New Meme Cat Match! 
     if (typeof Notification !== 'undefined') {
       const notif = new Notification(title, {
         body: bodyText,
-        icon: '/cat-icon.svg',
+        icon: '/favicon.svg',
         data: { url: targetUrl },
       });
       notif.onclick = () => {
@@ -85,7 +85,7 @@ export async function showTokenNotification(token, title = 'New Meme Cat Match! 
       return true;
     }
   } catch (err) {
-    console.warn('[Meme Cat Notifications] Notification dispatch notice:', err.message);
+    console.warn('[Solana Radar Notifications] Notification dispatch notice:', err.message);
   }
   return false;
 }
@@ -93,12 +93,12 @@ export async function showTokenNotification(token, title = 'New Meme Cat Match! 
 export async function sendTestNotification() {
   return showTokenNotification(
     {
-      symbol: 'MEMECAT',
+      symbol: 'SOL',
       marketCap: 420000,
       smartMoneyCount: 5,
       kolCount: 2,
       url: window.location.href,
     },
-    'Meme Cat Radar: Phone Notifications Activated! 🐾'
+    'Solana Radar Pro: Phone Notifications Activated'
   );
 }

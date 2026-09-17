@@ -9,6 +9,15 @@ import { useBotStore } from './stores/botStore';
 import { botApi } from './api/botClient';
 import { soundFX } from './engine/soundFX';
 import { showTokenNotification, initServiceWorker } from './engine/phoneNotification';
+import {
+  IconRadar,
+  IconTarget,
+  IconBot,
+  IconOrders,
+  IconDownload,
+  IconVolume,
+  IconVolumeX,
+} from './components/Icons';
 
 export default function App() {
   const [tokens, setTokens] = useState([]);
@@ -208,7 +217,7 @@ export default function App() {
         slippageBps: botConfig.slippageBps || 500,
       });
       if (res.success) {
-        alert(`✓ Buy order landed! Tx: ${res.txSignature?.slice(0, 8)}...`);
+        alert(`Buy order landed! Tx: ${res.txSignature?.slice(0, 8)}...`);
         // Refresh trades
         const tradesRes = await botApi.getTrades(connectedWallet);
         if (Array.isArray(tradesRes.trades)) setTrades(tradesRes.trades);
@@ -249,12 +258,12 @@ export default function App() {
           // 1. In-app toast popup
           toastQueueRef.current.push({
             token: t,
-            title: `New Match: $${t.symbol}`,
+            title: `Signal Match: $${t.symbol}`,
             message: `MCap: $${Math.round(t.marketCap || 0).toLocaleString()} | Smart: ${t.smartMoneyCount ?? 0} holding`,
           });
 
           // 2. User directive: Phone Chrome notification popup
-          showTokenNotification(t, `🐾 Meme Cat Alert: $${t.symbol}`).catch(() => {});
+          showTokenNotification(t, `Signal Alert: $${t.symbol}`).catch(() => {});
         }
       }
     }
@@ -339,7 +348,7 @@ export default function App() {
       {/* 3. Footer */}
       <footer className="border-t border-slate-800/60 py-4 px-4 text-center text-xs text-slate-400 mb-12 md:mb-0">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>Meme Cat Discovery Radar • 100% On-Chain &amp; Official GMGN Telemetry</span>
+          <span>Solana Token Radar Pro • 100% On-Chain &amp; Official GMGN Telemetry</span>
           <span className="font-mono text-[11px] text-slate-400">Solana Autonomous Trading Bot • Jupiter v6 &amp; Jito MEV</span>
         </div>
       </footer>
@@ -350,7 +359,7 @@ export default function App() {
           onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
           className="flex flex-col items-center gap-0.5 text-cyan-400 hover:text-white transition-colors"
         >
-          <span className="text-base">🐾</span>
+          <IconRadar className="w-5 h-5" />
           <span className="text-[10px] font-bold">Radar</span>
         </button>
 
@@ -361,7 +370,7 @@ export default function App() {
           }}
           className="flex flex-col items-center gap-0.5 text-slate-300 hover:text-white transition-colors"
         >
-          <span className="text-base">🎯</span>
+          <IconTarget className="w-5 h-5" />
           <span className="text-[10px] font-bold">Filters ({activeFilterCount})</span>
         </button>
 
@@ -369,7 +378,7 @@ export default function App() {
           onClick={() => setIsBotModalOpen(true)}
           className="flex flex-col items-center gap-0.5 text-purple-400 hover:text-purple-300 transition-colors"
         >
-          <span className="text-base">🤖</span>
+          <IconBot className="w-5 h-5" />
           <span className="text-[10px] font-bold">Bot</span>
         </button>
 
@@ -377,7 +386,7 @@ export default function App() {
           onClick={() => setIsTradesModalOpen(true)}
           className="flex flex-col items-center gap-0.5 text-emerald-400 hover:text-emerald-300 transition-colors relative"
         >
-          <span className="text-base">💼</span>
+          <IconOrders className="w-5 h-5" />
           <span className="text-[10px] font-bold">Trades</span>
           {trades.length > 0 && (
             <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-emerald-500 text-slate-950 font-black text-[9px] flex items-center justify-center">
@@ -391,7 +400,7 @@ export default function App() {
             onClick={handleInstallApp}
             className="flex flex-col items-center gap-0.5 text-rose-400 hover:text-rose-300 font-bold transition-colors animate-pulse"
           >
-            <span className="text-base">📲</span>
+            <IconDownload className="w-5 h-5" />
             <span className="text-[10px] font-black">Install</span>
           </button>
         )}
@@ -400,7 +409,7 @@ export default function App() {
           onClick={handleToggleSound}
           className="flex flex-col items-center gap-0.5 text-slate-400 hover:text-white transition-colors"
         >
-          <span className="text-base">{soundMuted ? '🔇' : '🔔'}</span>
+          {soundMuted ? <IconVolumeX className="w-5 h-5" /> : <IconVolume className="w-5 h-5" />}
           <span className="text-[10px] font-bold">{soundMuted ? 'Muted' : 'Chime'}</span>
         </button>
       </div>

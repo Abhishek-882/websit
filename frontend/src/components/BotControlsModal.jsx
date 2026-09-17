@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
+import {
+  IconBot,
+  IconClose,
+  IconInfo,
+  IconChartDip,
+  IconBolt,
+  IconTrash,
+  IconCheck,
+} from './Icons';
 
 const FIBONACCI_SPOTS = [
   { label: '-10% (Fib 0.236)', value: 10 },
@@ -108,8 +117,8 @@ export default function BotControlsModal({ isOpen, onClose }) {
         {/* Header */}
         <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-gradient-to-tr from-cyan-500 to-emerald-500 text-slate-950 font-bold text-lg">
-              🤖
+            <div className="p-2 rounded-xl bg-gradient-to-tr from-cyan-500 to-emerald-500 text-slate-950 font-bold">
+              <IconBot className="w-5 h-5 text-slate-950" />
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
@@ -126,14 +135,16 @@ export default function BotControlsModal({ isOpen, onClose }) {
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            aria-label="Close modal"
           >
-            ✕
+            <IconClose className="w-4 h-4" />
           </button>
         </div>
 
         {statusMsg && (
-          <div className="mb-4 p-2.5 rounded-lg bg-cyan-950/80 border border-cyan-700 text-cyan-300 text-xs font-mono animate-pulse">
-            ℹ️ {statusMsg}
+          <div className="mb-4 p-2.5 rounded-lg bg-cyan-950/80 border border-cyan-700 text-cyan-300 text-xs font-mono flex items-center gap-2 animate-pulse">
+            <IconInfo className="w-4 h-4 shrink-0 text-cyan-400" />
+            <span>{statusMsg}</span>
           </div>
         )}
 
@@ -169,7 +180,13 @@ export default function BotControlsModal({ isOpen, onClose }) {
                     onClick={copySessionKey}
                     className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold shrink-0 transition-colors"
                   >
-                    {copied ? '✓ Copied' : 'Copy'}
+                    {copied ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-400">
+                        <IconCheck className="w-3 h-3" /> Copied
+                      </span>
+                    ) : (
+                      'Copy'
+                    )}
                   </button>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -182,8 +199,9 @@ export default function BotControlsModal({ isOpen, onClose }) {
                   </button>
                 </div>
               </div>
-              <p className="text-[11px] text-slate-400">
-                💡 Send SOL from Phantom/Solflare to this deposit address to fund trades.
+              <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                <IconInfo className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                <span>Send SOL from Phantom or Solflare to this deposit address to fund trades.</span>
               </p>
             </div>
           ) : (
@@ -256,7 +274,8 @@ export default function BotControlsModal({ isOpen, onClose }) {
             <div className="p-3 rounded-lg bg-slate-900/80 border border-cyan-800/50 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
-                  <span>📉 Fibonacci Retracement Dip Spot</span>
+                  <IconChartDip className="w-4 h-4 text-cyan-400" />
+                  <span>Fibonacci Retracement Dip Spot</span>
                 </span>
                 <span className="text-[10px] text-slate-400 font-mono">
                   Trigger Spot: -{botConfig.limitDipPct || 20}%
@@ -388,7 +407,10 @@ export default function BotControlsModal({ isOpen, onClose }) {
           {/* Jito MEV Bundle Toggle */}
           <div className="flex items-center justify-between p-2 rounded-lg bg-slate-900/70 border border-emerald-800/50">
             <div>
-              <span className="text-xs font-bold text-emerald-300 block">⚡ Jito MEV Bundle</span>
+              <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                <IconBolt className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Jito MEV Bundle</span>
+              </span>
               <span className="text-[10px] text-slate-400">&lt;600ms private landing, anti-sandwich protection</span>
             </div>
             <input
@@ -491,7 +513,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
                     className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded transition-colors"
                     title="Delete Rule"
                   >
-                    🗑
+                    <IconTrash className="w-3.5 h-3.5" />
                   </button>
                 </div>
               );
@@ -542,8 +564,9 @@ export default function BotControlsModal({ isOpen, onClose }) {
         {/* Footer */}
         <div className="flex items-center justify-between pt-3 border-t border-slate-800">
           {saveSuccess ? (
-            <span className="text-xs font-bold text-emerald-400 animate-pulse">
-              ✓ Settings saved to bot backend!
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400 animate-pulse">
+              <IconCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Settings saved to bot backend!</span>
             </span>
           ) : (
             <span className="text-xs text-slate-400 font-mono">
