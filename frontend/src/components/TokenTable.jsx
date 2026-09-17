@@ -126,7 +126,7 @@ export default function TokenTable({
           </svg>
         </div>
         <h3 className="text-sm font-semibold text-white mb-1">
-          ● Scanning {isBase ? 'Base' : 'Solana'} DEX for active meme coins...
+          ● Scanning Solana DEX for active meme coins...
         </h3>
         <p className="text-xs text-slate-400 font-mono">
           [100% Live Telemetry • Zero Hardcoded Fallbacks • Pre-filtering Liquidity &gt; $1,000]
@@ -261,12 +261,12 @@ export default function TokenTable({
                 {/* 2. Smart Money */}
                 <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
                   <span className="text-[10px] uppercase font-semibold text-emerald-400 block">Smart Money</span>
-                  {!isEnriched ? (
-                    <span className="text-[11px] text-slate-500 italic">Queueing...</span>
+                  {token.smartMoneyCount === null || token.smartMoneyCount === undefined ? (
+                    <span className="text-[11px] text-slate-500 italic">Scanning...</span>
                   ) : (
                     <div className="font-mono">
                       <span className="font-black text-xs text-white">
-                        💎 {token.smartMoneyCount ?? 0} holding
+                        💎 {token.smartMoneyCount} holding
                       </span>
                       {token.smartMoneySoldCount > 0 && (
                         <span className="text-[10px] text-slate-400 block">
@@ -280,12 +280,12 @@ export default function TokenTable({
                 {/* 3. KOL Holders */}
                 <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
                   <span className="text-[10px] uppercase font-semibold text-purple-400 block">KOL Holders</span>
-                  {!isEnriched ? (
-                    <span className="text-[11px] text-slate-500 italic">Queueing...</span>
+                  {token.kolCount === null || token.kolCount === undefined ? (
+                    <span className="text-[11px] text-slate-500 italic">Scanning...</span>
                   ) : (
                     <div className="font-mono">
                       <span className="font-black text-xs text-purple-300">
-                        📣 {token.kolCount ?? 0} holding
+                        📣 {token.kolCount} holding
                       </span>
                       {token.kolSoldCount > 0 && (
                         <span className="text-[10px] text-slate-400 block">
@@ -299,8 +299,8 @@ export default function TokenTable({
                 {/* 4. Dev Fund & Balance Bar */}
                 <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
                   <span className="text-[10px] uppercase font-semibold text-amber-400 block">Dev Fund</span>
-                  {!isEnriched ? (
-                    <span className="text-[11px] text-slate-500 italic">Queueing...</span>
+                  {!token.devFund ? (
+                    <span className="text-[11px] text-slate-500 italic">Scanning...</span>
                   ) : (
                     <div className="space-y-1">
                       <div className="flex items-center gap-1">
@@ -314,7 +314,7 @@ export default function TokenTable({
                           {devFund.devStatus || 'Holding'}
                         </span>
                         {devFund.fundingSource && (
-                          <span className="text-[9px] text-slate-400 truncate max-w-[60px]">
+                          <span className="text-[9px] text-slate-400 truncate max-w-[60px]" title={devFund.fundingSource}>
                             {devFund.fundingSource}
                           </span>
                         )}
@@ -448,8 +448,8 @@ export default function TokenTable({
 
                     {/* 3. Smart Money (Strict active holding >= $50) */}
                     <td className="py-3 px-3">
-                      {!isEnriched ? (
-                        <span className="text-[11px] text-slate-400 italic">Queueing...</span>
+                      {smartCount === null || smartCount === undefined ? (
+                        <span className="text-[11px] text-slate-400 italic">Scanning...</span>
                       ) : smartCount > 0 ? (
                         <div>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-950/70 border border-emerald-800/80 text-emerald-300 font-bold text-xs font-mono">
@@ -479,8 +479,8 @@ export default function TokenTable({
 
                     {/* 4. KOL (Strict active holding >= $50) */}
                     <td className="py-3 px-3">
-                      {!isEnriched ? (
-                        <span className="text-[11px] text-slate-400 italic">Queueing...</span>
+                      {kolCount === null || kolCount === undefined ? (
+                        <span className="text-[11px] text-slate-400 italic">Scanning...</span>
                       ) : kolCount > 0 ? (
                         <div>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-950/70 border border-purple-800/80 text-purple-300 font-bold text-xs font-mono">
@@ -510,8 +510,8 @@ export default function TokenTable({
 
                     {/* 5. Fund in Dev & Dev Money Bar */}
                     <td className="py-3 px-3">
-                      {!isEnriched ? (
-                        <span className="text-[11px] text-slate-400 italic">Queueing...</span>
+                      {!token.devFund ? (
+                        <span className="text-[11px] text-slate-400 italic">Scanning...</span>
                       ) : (
                         <div className="space-y-1">
                           <div className="flex items-center gap-1.5">

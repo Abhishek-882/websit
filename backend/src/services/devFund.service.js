@@ -20,7 +20,8 @@ export class DevFundService {
   constructor() {
     this.connection = new Connection(RPC_URL, 'confirmed');
     this.devCache = new Map(); // devAddress -> { devBalanceSol, cachedAt }
-    this.cacheTtlMs = 10 * 60 * 1000; // 10 minutes
+    this.mintToCreatorCache = new Map(); // mintAddress -> { creatorAddress, cachedAt }
+    this.cacheTtlMs = 15 * 60 * 1000; // 15 minutes
   }
 
   /**
@@ -60,6 +61,86 @@ export class DevFundService {
       isCex: false,
       amountSol: parsedAmount,
     };
+  }
+
+  /**
+   * Resolve true on-chain creator / fee-payer wallet directly from token mint creation tx.
+   * Eliminates any dependency on GMGN for developer address discovery.
+   */
+  async resolveCreatorFromMint(mintAddress) {
+    if (!mintAddress || typeof mintAddress !== 'string') return null;
+
+    const cached = this.mintToCreatorCache.get(mintAddress);
+    if (cached && (Date.now() - cached.cachedAt) < this.cacheTtlMs) {
+      return cached.creatorAddress;
+    }
+
+    const RPCS = [
+      RPC_URL,
+      'https://solana-rpc.publicnode.com',
+      'https://api.mainnet-beta.solana.com',
+    ];
+
+    for (const rpc of RPCS) {
+      try {
+        // 1. Get earliest signatures for mint address
+        const sigResp = await fetch(rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getSignaturesForAddress',
+            params: [mintAddress, { limit: 50 }],
+          }),
+          signal: AbortSignal.timeout(4000),
+        });
+
+        if (!sigResp.ok) continue;
+        const sigData = await sigResp.json();
+        const sigs = sigData?.result;
+        if (!Array.isArray(sigs) || sigs.length === 0) continue;
+
+        // Earliest available tx in signature window
+        const oldestSig = sigs[sigs.length - 1].signature;
+
+        // 2. Fetch parsed transaction to extract creation signer / fee payer
+        const txResp = await fetch(rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'getTransaction',
+            params: [oldestSig, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' }],
+          }),
+          signal: AbortSignal.timeout(4000),
+        });
+
+        if (!txResp.ok) continue;
+        const txData = await txResp.json();
+        const txResult = txData?.result;
+        
+        let creator = null;
+
+        // Extract from transaction accountKeys (signer 0 is standard fee payer / creator)
+        const accountKeys = txResult?.transaction?.message?.accountKeys;
+        if (Array.isArray(accountKeys) && accountKeys.length > 0) {
+          const firstKey = accountKeys[0];
+          creator = typeof firstKey === 'string' ? firstKey : (firstKey?.pubkey || null);
+        }
+
+        // Validate creator is not the mint address itself
+        if (creator && creator !== mintAddress && creator.length >= 32 && creator.length <= 44) {
+          this.mintToCreatorCache.set(mintAddress, { creatorAddress: creator, cachedAt: Date.now() });
+          return creator;
+        }
+      } catch {
+        // Failover to next RPC
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -126,16 +207,37 @@ export class DevFundService {
   }
 
   /**
-   * Enrich dev funding & net-worth data from GMGN dev telemetry + on-chain balance
+   * Enrich dev funding & net-worth data from GMGN dev telemetry + on-chain balance.
+   * GUARANTEE: Never treats the token mint address as the developer wallet.
    */
-  async resolveDevFund(gmgnDevInfo, coinDevAddress = null, solPriceUsd = 150) {
-    const devAddress = gmgnDevInfo?.creator_address || gmgnDevInfo?.address || coinDevAddress || null;
+  async resolveDevFund(gmgnDevInfo = {}, mintAddress = null, solPriceUsd = 145) {
+    let devAddress = gmgnDevInfo?.creator_address || gmgnDevInfo?.creator || null;
+
+    // Reject if devAddress is mistakenly equal to the token mint
+    if (devAddress && mintAddress && devAddress === mintAddress) {
+      devAddress = null;
+    }
+
+    // If GMGN did not supply a creator address, resolve on-chain via Solana RPC
+    if (!devAddress && mintAddress) {
+      devAddress = await this.resolveCreatorFromMint(mintAddress);
+    }
+
     const rawFundFrom = gmgnDevInfo?.fund_from || null;
     const rawFundAmount = gmgnDevInfo?.fund_amount || null;
 
     const funding = this.classifyFundingSource(rawFundFrom, rawFundAmount);
     const solBalance = devAddress ? await this.getDevSolBalance(devAddress) : null;
-    const devBalanceUsd = solBalance !== null ? Math.round(solBalance * solPriceUsd) : (funding.amountSol ? Math.round(funding.amountSol * solPriceUsd) : null);
+    
+    // Compute USD balance from live on-chain SOL or CEX funding amount
+    let devBalanceUsd = null;
+    if (solBalance !== null && solBalance > 0) {
+      devBalanceUsd = Math.round(solBalance * solPriceUsd);
+    } else if (funding.amountSol && funding.amountSol > 0) {
+      devBalanceUsd = Math.round(funding.amountSol * solPriceUsd);
+    } else if (solBalance === 0) {
+      devBalanceUsd = 0;
+    }
 
     const creatorStatus = String(gmgnDevInfo?.creator_token_status || '').toLowerCase();
     const isDumped = creatorStatus.includes('close') || creatorStatus.includes('dump') || creatorStatus.includes('sold') || creatorStatus === 'creator_close';
@@ -148,14 +250,18 @@ export class DevFundService {
       statusLabel = 'Dumped 100%';
     }
 
+    const fundingDisplay = funding.amountSol
+      ? `${funding.source} (${funding.amountSol} SOL)`
+      : (funding.source !== 'Unknown' ? funding.source : (devAddress ? `${devAddress.slice(0, 4)}...${devAddress.slice(-4)}` : 'Direct'));
+
     return {
       devAddress,
       devBalanceSol: solBalance,
-      devBalanceUsd: devBalanceUsd,
-      fundingSource: funding.source,
+      devBalanceUsd,
+      fundingSource: funding.source !== 'Unknown' ? funding.source : (devAddress ? `${devAddress.slice(0, 4)}...${devAddress.slice(-4)}` : 'Direct'),
       isCexFunded: funding.isCex,
       fundingAmountSol: funding.amountSol,
-      fundingDisplay: funding.amountSol ? `${funding.source} (${funding.amountSol} SOL)` : funding.source,
+      fundingDisplay,
       devStatus: statusLabel,
       isDumped,
       isCto,

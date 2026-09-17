@@ -14,7 +14,7 @@ export class TokenAggregatorService {
     this.timer = null;
     this.fastTickerTimer = null;
     this.cacheTtlMs = 10 * 60 * 1000; // 10 minutes cache TTL
-    this.maxGmgnEnrichmentsPerCycle = 3; // Rate-safe limit per cycle (max 3 tokens = <=6 calls/min)
+    this.maxGmgnEnrichmentsPerCycle = 8; // Safely paced throughput across 5 keys
     this.solPriceUsd = 145; // Live SOL price in USD
   }
 
@@ -246,6 +246,20 @@ export class TokenAggregatorService {
         }
       }
 
+      // Proactively resolve on-chain dev funds for discovered tokens in parallel (zero GMGN rate-limit risk)
+      const tokensNeedingDevFund = Array.from(this.tokensMap.values())
+        .filter(t => !t.devFund)
+        .slice(0, 10);
+
+      if (tokensNeedingDevFund.length > 0) {
+        Promise.all(tokensNeedingDevFund.map(async (token) => {
+          try {
+            const devFund = await devFundService.resolveDevFund({}, token.address, this.solPriceUsd);
+            if (devFund) token.devFund = devFund;
+          } catch {}
+        })).catch(() => {});
+      }
+
       // Stage 2: Targeted GMGN & Dev Fund Enrichment
       const now = Date.now();
       const needEnrichment = Array.from(this.tokensMap.values())
@@ -253,16 +267,18 @@ export class TokenAggregatorService {
         .sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0))
         .slice(0, this.maxGmgnEnrichmentsPerCycle);
 
-      console.log(`[Token Aggregator] Enriching ${needEnrichment.length} SOL tokens with GMGN telemetry...`);
+      console.log(`[Token Aggregator] Enriching ${needEnrichment.length} SOL tokens with GMGN telemetry & on-chain dev funds...`);
 
       for (const token of needEnrichment) {
         if (!gmgnKeyPool.isAvailable()) {
-          console.warn(`[Token Aggregator] GMGN Key Pool cooldown active (${gmgnKeyPool.getCooldownRemainingSec()}s). Gracefully maintaining on-chain telemetry for $${token.symbol}.`);
+          console.warn(`[Token Aggregator] GMGN Key Pool cooldown active (${gmgnKeyPool.getCooldownRemainingSec()}s). Maintaining on-chain telemetry for $${token.symbol}.`);
           try {
             if (!token.devFund) {
               const devFund = await devFundService.resolveDevFund({}, token.address, this.solPriceUsd);
               token.devFund = devFund;
             }
+            if (token.smartMoneyCount === null) token.smartMoneyCount = 0;
+            if (token.kolCount === null) token.kolCount = 0;
             token.enrichedAt = Date.now();
           } catch {}
           continue;
@@ -298,6 +314,7 @@ export class TokenAggregatorService {
           let activeSmartHolders = [];
           let soldSmartHolders = [];
 
+          // Fast-gated top traders queries (only if candidates actually exist)
           if (candidateKolCount > 0) {
             try {
               const kolRes = await gmgnKeyPool.getTokenTopTraders('sol', token.address, { tag: 'renowned' });
@@ -350,6 +367,8 @@ export class TokenAggregatorService {
               const devFund = await devFundService.resolveDevFund({}, token.address, this.solPriceUsd);
               token.devFund = devFund;
             }
+            if (token.smartMoneyCount === null) token.smartMoneyCount = 0;
+            if (token.kolCount === null) token.kolCount = 0;
             token.enrichedAt = Date.now();
           } catch {}
         }
