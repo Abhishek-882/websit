@@ -16,8 +16,8 @@ router.post('/auth/send-otp', async (req, res) => {
     if (!email || !email.endsWith('@gmail.com')) {
       return res.status(400).json({ error: 'Valid Gmail address required' });
     }
-    await sendOtp(email);
-    res.json({ success: true, message: 'OTP sent' });
+    const result = await sendOtp(email);
+    res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

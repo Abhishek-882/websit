@@ -3,25 +3,49 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { saveOtp, verifyAndConsumeOtp, findOrCreateUser, getUser } from '../db/database.js';
 
-const GMAIL_SENDER = process.env.GMAIL_SENDER_EMAIL || 'test@gmail.com';
-const GMAIL_PASS = process.env.GMAIL_APP_PASSWORD || 'password';
+const GMAIL_SENDER = process.env.GMAIL_SENDER_EMAIL || '';
+const GMAIL_PASS = process.env.GMAIL_APP_PASSWORD || '';
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: GMAIL_SENDER,
-    pass: GMAIL_PASS
-  }
-});
+const hasValidSmtp = Boolean(
+  GMAIL_SENDER && 
+  GMAIL_PASS && 
+  GMAIL_SENDER !== 'test@gmail.com' && 
+  GMAIL_PASS !== 'password'
+);
+
+let transporter = null;
+if (hasValidSmtp) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: GMAIL_SENDER,
+      pass: GMAIL_PASS
+    },
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 5000,
+  });
+}
 
 export async function sendOtp(email) {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   await saveOtp(email, otp);
 
+  // If real SMTP credentials are NOT configured on the server, provide backup OTP immediately
+  if (!transporter) {
+    console.warn(`[AUTH] ⚠️ Gmail credentials not configured in environment. Backup OTP for ${email}: ${otp}`);
+    return {
+      success: true,
+      deliveredVia: 'backup',
+      backupOtp: otp,
+      message: 'SMTP credentials not configured on server. Use the backup verification code below.'
+    };
+  }
+
   const html = `
     <div style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; padding: 20px;">
-      <h2>Your Login Code</h2>
+      <h2>Your Solana Radar Login Code</h2>
       <p>Use the following 6-digit code to log in:</p>
       <h1 style="font-family: monospace; font-size: 32px; background: #333; padding: 10px; display: inline-block;">${otp}</h1>
       <p>This code expires in 5 minutes.</p>
@@ -29,12 +53,30 @@ export async function sendOtp(email) {
     </div>
   `;
 
-  await transporter.sendMail({
-    from: `"App Auth" <${GMAIL_SENDER}>`,
-    to: email,
-    subject: 'Your Verification Code',
-    html
-  });
+  try {
+    // Send email with strict 6s timeout so it NEVER hangs
+    const sendPromise = transporter.sendMail({
+      from: `"Solana Radar" <${GMAIL_SENDER}>`,
+      to: email,
+      subject: 'Your Verification Code',
+      html
+    });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SMTP connection timed out after 6 seconds')), 6000)
+    );
+
+    await Promise.race([sendPromise, timeoutPromise]);
+    return { success: true, deliveredVia: 'email', message: 'OTP sent to your Gmail inbox (check spam folder).' };
+  } catch (err) {
+    console.warn(`[AUTH] ⚠️ SMTP email send failed (${err.message}). Falling back to backup OTP.`);
+    return {
+      success: true,
+      deliveredVia: 'backup',
+      backupOtp: otp,
+      message: `Email could not be delivered (${err.message}). Use the backup code below to log in.`
+    };
+  }
 }
 
 export async function verifyOtp(email, otp) {

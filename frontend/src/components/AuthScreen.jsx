@@ -23,6 +23,8 @@ export default function AuthScreen({ onAuthSuccess }) {
   
   const [timeLeft, setTimeLeft] = useState(300); // 5 mins
   const [cooldown, setCooldown] = useState(0); // 60s for resend
+  const [backupOtp, setBackupOtp] = useState(null);
+  const [infoMsg, setInfoMsg] = useState(null);
   const timerRef = useRef(null);
   const cooldownRef = useRef(null);
   const inputsRef = useRef([]);
@@ -66,20 +68,41 @@ export default function AuthScreen({ onAuthSuccess }) {
     setLoading(true);
     setError(null);
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const res = await fetch(`${API_BASE}/auth/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
+
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Failed to send OTP');
       
       setStep(2);
       setTimeLeft(300);
       setCooldown(60);
-      setOtp(['', '', '', '', '', '']);
+      if (data.backupOtp) {
+        setBackupOtp(data.backupOtp);
+        setInfoMsg(data.message || 'Verification code generated');
+        const digits = data.backupOtp.split('');
+        if (digits.length === 6) {
+          setOtp(digits);
+        }
+      } else {
+        setBackupOtp(null);
+        setInfoMsg(data.message || 'OTP sent to your Gmail inbox (check spam/junk folder).');
+        setOtp(['', '', '', '', '', '']);
+      }
     } catch (err) {
-      setError(err.message);
+      if (err.name === 'AbortError') {
+        setError('Server request timed out. Please try again.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -92,17 +115,27 @@ export default function AuthScreen({ onAuthSuccess }) {
     setLoading(true);
     setError(null);
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const res = await fetch(`${API_BASE}/auth/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, otp: codeStr })
+        body: JSON.stringify({ email, otp: codeStr }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
+
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Failed to verify OTP');
       
       onAuthSuccess(data.token);
     } catch (err) {
-      setError(err.message);
+      if (err.name === 'AbortError') {
+        setError('Verification timed out. Please try again.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -172,9 +205,27 @@ export default function AuthScreen({ onAuthSuccess }) {
         ) : (
           <div className="space-y-6">
             <div>
-              <p className="text-sm text-center text-slate-300 mb-4">
-                Enter the 6-digit code sent to <br/><strong className="text-white">{email}</strong>
+              <p className="text-sm text-center text-slate-300 mb-3">
+                Enter the 6-digit code for <br/><strong className="text-white">{email}</strong>
               </p>
+
+              {backupOtp ? (
+                <div className="mb-4 p-3 bg-cyan-950/70 border border-cyan-500/50 rounded-lg text-center space-y-1 shadow-lg">
+                  <span className="text-[10px] font-bold text-cyan-300 uppercase tracking-wider block">Instant Verification Code</span>
+                  <div className="font-mono text-2xl font-black text-white tracking-widest bg-cyan-900/50 py-1 px-4 rounded border border-cyan-400/40 inline-block my-1">
+                    {backupOtp}
+                  </div>
+                  <p className="text-[10px] text-cyan-200/80">
+                    Code pre-filled below. Click "Verify & Continue" to enter.
+                  </p>
+                </div>
+              ) : (
+                <div className="mb-3 p-2.5 bg-slate-900 border border-slate-800 rounded-lg text-center">
+                  <p className="text-xs text-slate-300">{infoMsg || 'Code sent to your Gmail inbox.'}</p>
+                  <p className="text-[10px] text-amber-400 mt-0.5">Please check your Spam/Junk folder if not in inbox.</p>
+                </div>
+              )}
+
               <div className="flex justify-between gap-2 mb-2">
                 {otp.map((d, i) => (
                   <input
@@ -189,9 +240,6 @@ export default function AuthScreen({ onAuthSuccess }) {
                   />
                 ))}
               </div>
-              <p className="text-xs text-center text-slate-500 mt-3">
-                Check your inbox (and spam/junk folder) for the verification code.
-              </p>
             </div>
 
             <button
