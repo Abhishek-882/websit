@@ -1,131 +1,99 @@
-import nodemailer from 'nodemailer';
+import https from 'https';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { saveOtp, verifyAndConsumeOtp, findOrCreateUser, getUser, saveUserPin, getUserPin } from '../db/database.js';
+import { saveOtp, verifyAndConsumeOtp, findOrCreateUser, saveUserPin, getUserPin } from '../db/database.js';
 
 // ── JWT Secret ──────────────────────────────────────────────────────
-// MUST be set as a fixed env var in Render dashboard for sessions to survive restarts.
-// If not set, we derive a deterministic fallback from stable machine info so it is at
-// least consistent within one running process rather than purely random each call.
-// PROPER FIX: Set JWT_SECRET=<any long random string> in Render environment variables.
 let JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  // Deterministic fallback — consistent per OS username+cwd combo, NOT truly random
-  const fallbackBase = `${process.env.USERNAME || process.env.USER || 'srv'}:${process.cwd()}`;
-  JWT_SECRET = crypto.createHash('sha256').update(fallbackBase).digest('hex');
-  console.warn('[AUTH] ⚠️  JWT_SECRET env var not set. Sessions will NOT survive a server hostname change.');
-  console.warn('[AUTH] ⚠️  Add JWT_SECRET to your Render environment variables to fix persistent login.');
+  JWT_SECRET = crypto.createHash('sha256').update(`${process.env.USERNAME || process.env.USER || 'srv'}:${process.cwd()}`).digest('hex');
+  console.warn('[AUTH] JWT_SECRET not set — add it to Render env vars for persistent login.');
 }
 
-// ── SMTP Configuration ──────────────────────────────────────────────
-const GMAIL_SENDER = process.env.GMAIL_SENDER_EMAIL || '';
-const GMAIL_PASS = process.env.GMAIL_APP_PASSWORD || '';
+// ── Brevo HTTP API ───────────────────────────────────────────────────
+// Uses HTTPS port 443 only — Render blocks SMTP ports 25/465/587.
+// Free plan: 300 emails/day. Sign up at brevo.com.
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+const BREVO_SENDER  = process.env.BREVO_SENDER_EMAIL || '';
+const hasBrevo = Boolean(BREVO_API_KEY && BREVO_SENDER);
+if (!hasBrevo) console.warn('[AUTH] Set BREVO_API_KEY + BREVO_SENDER_EMAIL in Render env vars.');
 
-const hasValidSmtp = Boolean(
-  GMAIL_SENDER &&
-  GMAIL_PASS &&
-  GMAIL_SENDER.includes('@') &&
-  GMAIL_PASS.length > 8
-);
-
-let transporter = null;
-if (hasValidSmtp) {
-  transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',   // explicit host avoids IPv6 resolution
-    port: 587,                // STARTTLS port — works on all Render regions
-    secure: false,            // upgrade via STARTTLS, not SSL
-    family: 4,                // force IPv4 — Render does NOT support IPv6
-    auth: {
-      user: GMAIL_SENDER,
-      pass: GMAIL_PASS,
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
+function sendViaBrevo(toEmail, subject, htmlContent) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      sender:      { name: 'MEME_CAT', email: BREVO_SENDER },
+      to:          [{ email: toEmail }],
+      subject,
+      htmlContent,
+    });
+    const req = https.request({
+      hostname: 'api.brevo.com',
+      port:     443,
+      path:     '/v3/smtp/email',
+      method:   'POST',
+      headers: {
+        'api-key':        BREVO_API_KEY,
+        'Content-Type':   'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        'Accept':         'application/json',
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', c => { raw += c; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) resolve({ ok: true });
+        else reject(new Error(`Brevo API error ${res.statusCode}: ${raw}`));
+      });
+    });
+    const t = setTimeout(() => { req.destroy(); reject(new Error('Email API timed out after 12s')); }, 12000);
+    req.on('close', () => clearTimeout(t));
+    req.on('error', e => { clearTimeout(t); reject(e); });
+    req.write(body);
+    req.end();
   });
 }
 
-// ── OTP Sending ─────────────────────────────────────────────────────
+// ── Send OTP ────────────────────────────────────────────────────────
 
 export async function sendOtp(email) {
-  // If SMTP is not configured at all, throw an honest error — no fake fallback
-  if (!transporter) {
-    throw new Error(
-      'Gmail SMTP is not configured on the server. ' +
-      'Set GMAIL_SENDER_EMAIL and GMAIL_APP_PASSWORD in Render environment variables to enable email delivery.'
-    );
+  if (!hasBrevo) {
+    throw new Error('Email not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL in Render environment variables.');
   }
-
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   await saveOtp(email, otp);
-
-  const html = `
-    <div style="font-family: Arial, sans-serif; background: #090d16; color: #f1f5f9; padding: 32px; border-radius: 8px; max-width: 480px;">
-      <h2 style="color: #06b6d4; margin-top: 0;">MEME_CAT — Verification Code</h2>
-      <p style="color: #cbd5e1;">Enter the following 6-digit code to verify your account:</p>
-      <div style="font-family: monospace; font-size: 36px; font-weight: 900; letter-spacing: 8px; background: #1e293b; padding: 16px 24px; border-radius: 6px; display: inline-block; color: #ffffff; margin: 12px 0;">
-        ${otp}
-      </div>
-      <p style="color: #94a3b8; font-size: 13px;">This code expires in <strong>5 minutes</strong>.</p>
-      <p style="color: #64748b; font-size: 12px; margin-bottom: 0;">If you did not request this, you can safely ignore this email.</p>
-    </div>
-  `;
-
-  // Enforce a hard timeout so the request never hangs indefinitely
-  const sendPromise = transporter.sendMail({
-    from: `"MEME_CAT" <${GMAIL_SENDER}>`,
-    to: email,
-    subject: 'Your MEME_CAT Verification Code',
-    html,
-  });
-
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Gmail SMTP connection timed out after 10 seconds')), 10000)
-  );
-
-  await Promise.race([sendPromise, timeoutPromise]);
-  return { success: true, message: 'Verification code sent to your Gmail inbox. Check your spam/junk folder if it does not appear within 60 seconds.' };
+  const html = `<div style="font-family:Arial,sans-serif;background:#090d16;color:#f1f5f9;padding:32px;border-radius:8px;max-width:480px;"><h2 style="color:#06b6d4;margin-top:0;">MEME_CAT Verification Code</h2><p style="color:#cbd5e1;">Enter this 6-digit code to verify your account:</p><div style="font-family:monospace;font-size:36px;font-weight:900;letter-spacing:8px;background:#1e293b;padding:16px 24px;border-radius:6px;display:inline-block;color:#fff;margin:12px 0;">${otp}</div><p style="color:#94a3b8;font-size:13px;">Expires in <strong>5 minutes</strong>.</p><p style="color:#64748b;font-size:12px;">If you did not request this, ignore this email.</p></div>`;
+  await sendViaBrevo(email, 'Your MEME_CAT Verification Code', html);
+  return { success: true, message: 'Code sent to your email. Check spam/junk if not received within 60 seconds.' };
 }
 
-// ── OTP Verification ────────────────────────────────────────────────
+// ── Verify OTP ──────────────────────────────────────────────────────
 
 export async function verifyOtp(email, otp) {
   const isValid = await verifyAndConsumeOtp(email, otp);
   if (!isValid) throw new Error('Invalid or expired verification code');
-
-  const user = await findOrCreateUser(email);
+  const user  = await findOrCreateUser(email);
   const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '24h' });
-
-  // Let the client know whether a PIN has been set so it can decide next step
-  const pinHash = await getUserPin(email);
-  return { token, user, hasPinSet: Boolean(pinHash) };
+  return { token, user, hasPinSet: Boolean(await getUserPin(email)) };
 }
 
 // ── 4-Digit PIN ─────────────────────────────────────────────────────
 
 export async function setPinForUser(email, pin) {
   if (!/^\d{4}$/.test(pin)) throw new Error('PIN must be exactly 4 digits');
-  const pinHash = crypto.createHash('sha256').update(`${email}:${pin}`).digest('hex');
-  await saveUserPin(email, pinHash);
+  await saveUserPin(email, crypto.createHash('sha256').update(`${email}:${pin}`).digest('hex'));
 }
 
 export async function verifyPinAndIssueToken(email, pin) {
   if (!/^\d{4}$/.test(pin)) throw new Error('PIN must be exactly 4 digits');
-
-  const storedHash = await getUserPin(email);
-  if (!storedHash) throw new Error('No PIN set for this account. Please log in with Gmail OTP first.');
-
-  const incomingHash = crypto.createHash('sha256').update(`${email}:${pin}`).digest('hex');
-  if (incomingHash !== storedHash) throw new Error('Incorrect PIN');
-
+  const stored = await getUserPin(email);
+  if (!stored) throw new Error('No PIN set. Log in with email OTP first.');
+  if (crypto.createHash('sha256').update(`${email}:${pin}`).digest('hex') !== stored) throw new Error('Incorrect PIN');
   const user = await findOrCreateUser(email);
-  const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '24h' });
-  return { token, user };
+  return { token: jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '24h' }), user };
 }
 
 export async function hasPinSet(email) {
-  const pinHash = await getUserPin(email);
-  return Boolean(pinHash);
+  return Boolean(await getUserPin(email));
 }
 
 // ── JWT Middleware ───────────────────────────────────────────────────
@@ -133,12 +101,10 @@ export async function hasPinSet(email) {
 export function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token provided' });
-
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
-  } catch (err) {
+  } catch {
     res.status(401).json({ error: 'Session expired. Please log in again.' });
   }
 }
