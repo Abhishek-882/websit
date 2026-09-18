@@ -4,7 +4,7 @@ import { gmgnKeyPool } from '../services/gmgnKeyPool.service.js';
 import { sessionWalletService } from '../services/sessionWallet.service.js';
 import { tradingService } from '../services/trading.service.js';
 import { getBotConfig, updateBotConfig, getTrades, saveSetFile, getSetFiles, getSetFile, deleteSetFile, getActiveSetFile, setActiveSetFile } from '../db/database.js';
-import { sendOtp, verifyOtp, verifyToken } from '../services/auth.service.js';
+import { sendOtp, verifyOtp, verifyToken, setPinForUser, verifyPinAndIssueToken, hasPinSet } from '../services/auth.service.js';
 
 const router = Router();
 
@@ -17,7 +17,8 @@ router.post('/auth/send-otp', async (req, res) => {
       return res.status(400).json({ error: 'Valid Gmail address required' });
     }
     const result = await sendOtp(email);
-    res.json(result);
+    // Only forward the message — NEVER forward an OTP code to the client
+    res.json({ success: true, message: result.message });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -27,8 +28,8 @@ router.post('/auth/verify-otp', async (req, res) => {
   try {
     const { email, otp } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
-    const { token, user } = await verifyOtp(email, otp);
-    res.json({ success: true, token, user });
+    const { token, user, hasPinSet: pinSet } = await verifyOtp(email, otp);
+    res.json({ success: true, token, user, hasPinSet: pinSet });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
   }
@@ -37,6 +38,55 @@ router.post('/auth/verify-otp', async (req, res) => {
 router.get('/auth/me', verifyToken, async (req, res) => {
   res.json({ success: true, user: req.user });
 });
+
+// Check whether a PIN has been configured for a given email (no auth required)
+router.get('/auth/pin-status', async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email || !email.endsWith('@gmail.com')) {
+      return res.status(400).json({ error: 'Valid Gmail address required' });
+    }
+    const hasPin = await hasPinSet(email);
+    res.json({ success: true, hasPin });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Set a 4-digit PIN for the authenticated user (requires valid JWT from OTP verification)
+router.post('/auth/set-pin', verifyToken, async (req, res) => {
+  try {
+    const { pin } = req.body;
+    const email = req.user?.email;
+    if (!email) return res.status(401).json({ error: 'Unauthorized' });
+    if (!pin || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ error: 'PIN must be exactly 4 digits (0-9)' });
+    }
+    await setPinForUser(email, pin);
+    res.json({ success: true, message: 'PIN saved. You can now use your 4-digit PIN to log in.' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Verify a 4-digit PIN and issue a fresh JWT (no existing JWT required)
+router.post('/auth/verify-pin', async (req, res) => {
+  try {
+    const { email, pin } = req.body;
+    if (!email || !email.endsWith('@gmail.com')) {
+      return res.status(400).json({ error: 'Valid Gmail address required' });
+    }
+    if (!pin || !/^\d{4}$/.test(pin)) {
+      return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+    }
+    const { token, user } = await verifyPinAndIssueToken(email, pin);
+    res.json({ success: true, token, user });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+
 
 router.use('/bot', verifyToken);
 

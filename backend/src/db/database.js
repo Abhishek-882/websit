@@ -33,6 +33,8 @@ function ensureLocalFile() {
       if (!localDb.bot_configs) localDb.bot_configs = {};
       if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
       if (!Array.isArray(localDb.bought_tokens)) localDb.bought_tokens = [];
+      if (!Array.isArray(localDb.users)) localDb.users = [];
+      if (!Array.isArray(localDb.auth_otps)) localDb.auth_otps = [];
     } catch {
       // fresh file if corrupt
     }
@@ -378,4 +380,27 @@ export async function verifyAndConsumeOtp(email, otp) {
   }
   return false;
 }
+
+// ── PIN helpers ────────────────────────────────────────────────────
+
+export async function saveUserPin(email, pinHash) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.users)) localDb.users = [];
+  let user = localDb.users.find(u => u.email === email);
+  if (!user) {
+    user = { id: localDb.users.length + 1, email, wallets: [], createdAt: new Date().toISOString() };
+    localDb.users.push(user);
+  }
+  user.pinHash = pinHash;
+  user.pinSetAt = new Date().toISOString();
+  saveLocalFile();
+}
+
+export async function getUserPin(email) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.users)) localDb.users = [];
+  const user = localDb.users.find(u => u.email === email);
+  return user?.pinHash || null;
+}
+
 

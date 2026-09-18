@@ -46,7 +46,11 @@ function loadSavedFilters() {
 }
 
 export default function App() {
-  const [authToken, setAuthToken] = useState(localStorage.getItem('auth_token') || null);
+  // Start as null; we validate the stored token against /auth/me on mount
+  // so that expired / revoked tokens don't leave users stuck on the main screen
+  const [authToken, setAuthToken] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
   const [tokens, setTokens] = useState([]);
   const [lastScanTimestamp, setLastScanTimestamp] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -65,6 +69,29 @@ export default function App() {
       console.warn('[Solana Radar] Error saving filters:', e);
     }
   }, [filters]);
+
+  // Validate stored JWT on mount — clears stale token if server restarted or token expired
+  useEffect(() => {
+    const stored = localStorage.getItem('auth_token');
+    if (!stored) {
+      setAuthChecked(true);
+      return;
+    }
+    fetch('/api/auth/me', { headers: { Authorization: `Bearer ${stored}` } })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          setAuthToken(stored);
+        } else {
+          localStorage.removeItem('auth_token');
+        }
+      })
+      .catch(() => {
+        // Network error — accept the stored token optimistically (offline scenario)
+        setAuthToken(stored);
+      })
+      .finally(() => setAuthChecked(true));
+  }, []); // eslint-disable-line
 
   // Trading Bot store & modal state
   const isBotModalOpen = useBotStore(s => s.isBotModalOpen);
@@ -390,15 +417,26 @@ export default function App() {
     setTimeout(() => setHighlightedAddress(null), 4000);
   };
 
-  const handleAuthSuccess = (token) => {
+  const handleAuthSuccess = (token, email) => {
     localStorage.setItem('auth_token', token);
+    if (email) localStorage.setItem('auth_email', email);
     setAuthToken(token);
   };
 
   const handleLogout = () => {
     localStorage.removeItem('auth_token');
+    // Keep auth_email so PIN screen knows which account to show
     setAuthToken(null);
   };
+
+  // While we're validating the stored JWT, show a loading spinner
+  if (!authChecked) {
+    return (
+      <div className="fixed inset-0 bg-[#080b12] flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   if (!authToken) {
     return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
