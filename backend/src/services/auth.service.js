@@ -53,11 +53,19 @@ function sendViaBrevo(toEmail, subject, htmlContent) {
   });
 }
 
-// ── Send OTP ────────────────────────────────────────────────────────
-
 export async function sendOtp(email) {
-  if (!hasBrevo) {
-    throw new Error('Email not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL in Render environment variables.');
+  if (BREVO_API_KEY && BREVO_API_KEY.startsWith('xsmtpsib-')) {
+    throw new Error(
+      'Brevo SMTP key detected (starts with xsmtpsib-). ' +
+      'The HTTP API requires a Brevo API Key (starts with xkeysib-). ' +
+      'In your Brevo dashboard, go to Settings -> SMTP & API -> click the "API Keys" tab (NOT the SMTP tab) -> click "Generate a new API key".'
+    );
+  }
+
+  if (!hasBrevo && !process.env.RESEND_API_KEY) {
+    throw new Error(
+      'Email delivery not configured. Set BREVO_API_KEY (starts with xkeysib-) and GMAIL_SENDER_EMAIL in Render environment variables.'
+    );
   }
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   await saveOtp(email, otp);
