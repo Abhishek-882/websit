@@ -31,14 +31,17 @@ const hasValidSmtp = Boolean(
 let transporter = null;
 if (hasValidSmtp) {
   transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',   // explicit host avoids IPv6 resolution
+    port: 587,                // STARTTLS port — works on all Render regions
+    secure: false,            // upgrade via STARTTLS, not SSL
+    family: 4,                // force IPv4 — Render does NOT support IPv6
     auth: {
       user: GMAIL_SENDER,
       pass: GMAIL_PASS,
     },
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 8000,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 }
 
