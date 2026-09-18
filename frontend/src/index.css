@@ -56,3 +56,18 @@
 .safe-area-bottom {
   padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
 }
+
+@keyframes radarScan {
+  0% {
+    transform: translateY(0);
+    opacity: 0.2;
+  }
+  50% {
+    transform: translateY(100vh);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 0.2;
+  }
+}

@@ -6,6 +6,8 @@ import ToastContainer from './components/ToastContainer';
 import BotControlsModal from './components/BotControlsModal';
 import TradesModal from './components/TradesModal';
 import AuthScreen from './components/AuthScreen';
+import IntroAnimation from './components/IntroAnimation';
+import UserSettingsModal, { loadUserPreferences, triggerHaptic } from './components/UserSettingsModal';
 import { useBotStore } from './stores/botStore';
 import { botApi } from './api/botClient';
 import { soundFX } from './engine/soundFX';
@@ -18,6 +20,7 @@ import {
   IconDownload,
   IconVolume,
   IconVolumeX,
+  IconSettings,
 } from './components/Icons';
 
 const STORAGE_KEY_FILTERS = 'solana_radar_filters';
@@ -119,6 +122,25 @@ export default function App() {
 
   // App Update Notification
   const [needsUpdate, setNeedsUpdate] = useState(false);
+
+  // User Comfort & Trading Preferences State
+  const [userPreferences, setUserPreferences] = useState(loadUserPreferences);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [showIntro, setShowIntro] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const prefs = loadUserPreferences();
+    if (!prefs.playIntroOnOpen) return false;
+    return !sessionStorage.getItem('memecat_intro_seen');
+  });
+
+  const handleIntroFinish = () => {
+    try { sessionStorage.setItem('memecat_intro_seen', 'true'); } catch (e) {}
+    setShowIntro(false);
+  };
+
+  const handleReplayIntro = () => {
+    setShowIntro(true);
+  };
 
   useEffect(() => {
     let interval;
@@ -300,20 +322,23 @@ export default function App() {
       setIsBotModalOpen(true);
       return;
     }
+    triggerHaptic('tap');
     const buyAmt = botConfig.buyAmountSol || 0.1;
     if (!confirm(`Execute autonomous purchase of ${buyAmt} SOL for $${token.symbol} (${token.name}) via Jupiter DEX?`)) {
       return;
     }
     try {
+      const customSlippageBps = userPreferences.slippagePercent ? Math.round(userPreferences.slippagePercent * 100) : 500;
       const res = await botApi.manualBuy({
         userWallet: connectedWallet,
         tokenAddress: token.address,
         coinName: token.name,
         coinSymbol: token.symbol,
         amountSol: buyAmt,
-        slippageBps: botConfig.slippageBps || 500,
+        slippageBps: botConfig.slippageBps || customSlippageBps,
       });
       if (res.success) {
+        triggerHaptic('success');
         alert(`Buy order landed! Tx: ${res.txSignature?.slice(0, 8)}...`);
         // Refresh trades
         const tradesRes = await botApi.getTrades(connectedWallet);
@@ -445,15 +470,22 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#080b12] text-slate-100 flex flex-col font-sans">
       
+      {/* Startup Cybernetic Intro Animation (Video-like experience) */}
+      {showIntro && (
+        <IntroAnimation onFinish={handleIntroFinish} />
+      )}
+
       {needsUpdate && (
-        <div className="sticky top-0 z-[100] bg-brandCyan/10 border-b border-brandCyan text-brandCyan text-sm font-bold text-center py-2 px-4 shadow-lg backdrop-blur-sm cursor-pointer hover:bg-brandCyan/20 transition-colors" onClick={() => window.location.reload()}>
-          🚀 A new version is available! Please click here or refresh to update.
+        <div className="sticky top-0 z-[100] bg-cyan-950/80 border-b border-cyan-500/40 text-cyan-300 text-xs font-semibold text-center py-2 px-4 shadow-lg backdrop-blur-sm cursor-pointer hover:bg-cyan-900/40 transition-colors flex items-center justify-center gap-2" onClick={() => window.location.reload()}>
+          <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-ping mr-1" />
+          A new version of MEME_CAT is available — click here to update
         </div>
       )}
 
       {/* 1. Header with Solana Lock, Live Ticker, Phone Alerts, Bot & Trades Modals */}
       <Header
         onLogout={handleLogout}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
         lastScanTimestamp={lastScanTimestamp}
         isScanning={isScanning}
         totalTokens={tokens.length}
@@ -495,8 +527,8 @@ export default function App() {
       {/* 3. Footer */}
       <footer className="border-t border-slate-800/60 py-4 px-4 text-center text-xs text-slate-400 mb-12 md:mb-0">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>Solana Token Radar Pro • 100% On-Chain &amp; Official GMGN Telemetry</span>
-          <span className="font-mono text-[11px] text-slate-400">Solana Autonomous Trading Bot • Jupiter v6 &amp; Jito MEV</span>
+          <span>MEME_CAT Pro • 100% On-Chain &amp; Official GMGN Telemetry</span>
+          <span className="font-mono text-[11px] text-slate-400">MEME_CAT Autonomous Trading Bot • Jupiter v6 &amp; Jito MEV</span>
         </div>
       </footer>
 
@@ -553,6 +585,17 @@ export default function App() {
         )}
 
         <button
+          onClick={() => {
+            triggerHaptic('tap');
+            setIsSettingsModalOpen(true);
+          }}
+          className="flex flex-col items-center gap-0.5 text-slate-400 hover:text-cyan-300 transition-colors"
+        >
+          <IconSettings className="w-5 h-5" />
+          <span className="text-[10px] font-bold">Settings</span>
+        </button>
+
+        <button
           onClick={handleToggleSound}
           className="flex flex-col items-center gap-0.5 text-slate-400 hover:text-white transition-colors"
         >
@@ -578,6 +621,15 @@ export default function App() {
       <TradesModal
         isOpen={isTradesModalOpen}
         onClose={() => setIsTradesModalOpen(false)}
+      />
+
+      {/* 8. User Comfort & Trading Preferences Modal */}
+      <UserSettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        preferences={userPreferences}
+        onUpdatePreferences={setUserPreferences}
+        onReplayIntro={handleReplayIntro}
       />
 
     </div>

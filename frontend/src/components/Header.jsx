@@ -9,6 +9,7 @@ import {
   IconBell,
   IconVolume,
   IconVolumeX,
+  IconSettings,
 } from './Icons';
 import {
   isNotificationSupported,
@@ -30,6 +31,8 @@ export default function Header({
   onInstallApp,
   onOpenBotModal,
   onOpenTradesModal,
+  onOpenSettings,
+  onLogout,
   tradesCount = 0,
 }) {
   const [secondsAgo, setSecondsAgo] = useState(null);
@@ -89,7 +92,7 @@ export default function Header({
             <div>
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <h1 className="text-base sm:text-lg font-black text-white tracking-tight flex items-center gap-1.5 font-mono">
-                  <span>SOLANA RADAR</span>
+                  <span>MEME_CAT</span>
                   <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/80 tracking-wider">
                     PRO TERMINAL
                   </span>
@@ -252,11 +255,21 @@ export default function Header({
             )}
           </button>
 
+          {/* User Comfort & Trading Preferences Settings */}
+          <button
+            onClick={onOpenSettings}
+            title="Open Comfort & Trading Settings"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-700/80 text-slate-300 hover:text-cyan-300 hover:border-cyan-700/80 font-medium transition-all shadow-sm active:scale-95"
+          >
+            <IconSettings className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline font-mono">Settings</span>
+          </button>
+
           {/* Logout Button */}
           <button
             onClick={onLogout}
             title="Logout"
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-950/40 border border-red-700/60 text-red-300 hover:bg-red-900/50 font-medium transition-all"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-950/40 border border-red-700/60 text-red-300 hover:bg-red-900/50 font-medium transition-all font-mono"
           >
             Logout
           </button>
