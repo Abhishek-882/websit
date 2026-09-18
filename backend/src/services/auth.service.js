@@ -58,7 +58,7 @@ export async function sendOtp(email) {
 
   const html = `
     <div style="font-family: Arial, sans-serif; background: #090d16; color: #f1f5f9; padding: 32px; border-radius: 8px; max-width: 480px;">
-      <h2 style="color: #06b6d4; margin-top: 0;">Solana Radar — Verification Code</h2>
+      <h2 style="color: #06b6d4; margin-top: 0;">MEME_CAT — Verification Code</h2>
       <p style="color: #cbd5e1;">Enter the following 6-digit code to verify your account:</p>
       <div style="font-family: monospace; font-size: 36px; font-weight: 900; letter-spacing: 8px; background: #1e293b; padding: 16px 24px; border-radius: 6px; display: inline-block; color: #ffffff; margin: 12px 0;">
         ${otp}
@@ -70,9 +70,9 @@ export async function sendOtp(email) {
 
   // Enforce a hard timeout so the request never hangs indefinitely
   const sendPromise = transporter.sendMail({
-    from: `"Solana Radar" <${GMAIL_SENDER}>`,
+    from: `"MEME_CAT" <${GMAIL_SENDER}>`,
     to: email,
-    subject: 'Your Solana Radar Verification Code',
+    subject: 'Your MEME_CAT Verification Code',
     html,
   });
 

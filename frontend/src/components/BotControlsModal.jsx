@@ -158,7 +158,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
 
     setIsExportingKey(true);
     try {
-      const message = `Authorize private key export for Solana Radar Session (${sessionPubkey}) at timestamp ${Date.now()}`;
+      const message = `Authorize private key export for MEME_CAT Session (${sessionPubkey}) at timestamp ${Date.now()}`;
       const messageBytes = new TextEncoder().encode(message);
 
       const signatureBytes = await signMessage(messageBytes);
@@ -558,7 +558,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
                   <li>Open Phantom &rarr; click top-left menu &rarr; click gear icon (<strong>Settings</strong>).</li>
                   <li>Tap <strong>Manage Accounts</strong> &rarr; <strong>Add / Connect Wallet</strong>.</li>
                   <li>Select <strong>Import Private Key</strong>.</li>
-                  <li>Paste this key and name it <strong>&ldquo;Solana Radar Bot&rdquo;</strong>.</li>
+                  <li>Paste this key and name it <strong>&ldquo;MEME_CAT Bot&rdquo;</strong>.</li>
                 </ol>
                 <span className="text-[10px] text-emerald-400 block pt-1">
                   &check; You now have direct control inside Phantom even without this website!

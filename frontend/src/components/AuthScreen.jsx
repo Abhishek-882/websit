@@ -498,8 +498,8 @@ export default function AuthScreen({ onAuthSuccess }) {
             </div>
             <h2 className="text-2xl font-black text-white text-center">Secure Authentication</h2>
             <p className="text-sm text-slate-400 text-center mt-2">
-              Enter your Gmail address to receive a verification code
-            </p>
+            Enter your Gmail address to access MEME_CAT
+          </p>
           </div>
 
           <ErrorBox msg={error} />

@@ -40,7 +40,7 @@ function loadSavedFilters() {
       return merged;
     }
   } catch (e) {
-    console.warn('[Solana Radar] Error loading saved filters:', e);
+    console.warn('[MEME_CAT] Error loading saved filters:', e);
   }
   return DEFAULT_FILTERS;
 }
@@ -66,7 +66,7 @@ export default function App() {
     try {
       localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(filters));
     } catch (e) {
-      console.warn('[Solana Radar] Error saving filters:', e);
+      console.warn('[MEME_CAT] Error saving filters:', e);
     }
   }, [filters]);
 
@@ -283,7 +283,7 @@ export default function App() {
     try {
       localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(DEFAULT_FILTERS));
     } catch (e) {
-      console.warn('[Solana Radar] Error resetting saved filters:', e);
+      console.warn('[MEME_CAT] Error resetting saved filters:', e);
     }
   };
 

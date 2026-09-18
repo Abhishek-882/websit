@@ -53,7 +53,7 @@ app.get('*', (req, res) => {
 tokenAggregatorService.startAutoScan();
 
 app.listen(PORT, () => {
-  console.log(`[Solana Radar Server] Listening on http://localhost:${PORT}`);
+  console.log(`[MEME_CAT Server] Listening on http://localhost:${PORT}`);
 });
 
 export default app;

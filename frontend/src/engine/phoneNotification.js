@@ -47,7 +47,7 @@ export async function requestNotificationPermission() {
   }
 }
 
-export async function showTokenNotification(token, title = 'Solana Radar Match') {
+export async function showTokenNotification(token, title = 'MEME_CAT Match') {
   if (getNotificationPermission() !== 'granted') return false;
 
   const targetUrl = token?.gmgnUrl || token?.url || '/';
@@ -85,7 +85,7 @@ export async function showTokenNotification(token, title = 'Solana Radar Match')
       return true;
     }
   } catch (err) {
-    console.warn('[Solana Radar Notifications] Notification dispatch notice:', err.message);
+    console.warn('[MEME_CAT Notifications] Notification dispatch notice:', err.message);
   }
   return false;
 }
@@ -99,6 +99,6 @@ export async function sendTestNotification() {
       kolCount: 2,
       url: window.location.href,
     },
-    'Solana Radar Pro: Phone Notifications Activated'
+    'MEME_CAT: Phone Notifications Activated'
   );
 }
