@@ -120,8 +120,6 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isInstalled, setIsInstalled] = useState(false);
 
-  // App Update Notification
-  const [needsUpdate, setNeedsUpdate] = useState(false);
 
   // User Comfort & Trading Preferences State
   const [userPreferences, setUserPreferences] = useState(loadUserPreferences);
@@ -142,28 +140,6 @@ export default function App() {
     setShowIntro(true);
   };
 
-  useEffect(() => {
-    let interval;
-    const checkVersion = async () => {
-      try {
-        const res = await fetch('/api/version');
-        if (res.ok) {
-          const data = await res.json();
-          // If server restarted, and its timestamp doesn't match our build timestamp, show update (unless local is a dev build where define is omitted/different)
-          if (typeof __BUILD_TIMESTAMP__ !== 'undefined' && data.timestamp && data.timestamp > __BUILD_TIMESTAMP__) {
-            setNeedsUpdate(true);
-          }
-        }
-      } catch (err) {
-        // fail silently
-      }
-    };
-    // Initial check
-    checkVersion();
-    // Poll every 60 seconds
-    interval = setInterval(checkVersion, 60000);
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     const handleBeforeInstall = (e) => {
@@ -473,13 +449,6 @@ export default function App() {
       {/* Startup Cybernetic Intro Animation (Video-like experience) */}
       {showIntro && (
         <IntroAnimation onFinish={handleIntroFinish} />
-      )}
-
-      {needsUpdate && (
-        <div className="sticky top-0 z-[100] bg-cyan-950/80 border-b border-cyan-500/40 text-cyan-300 text-xs font-semibold text-center py-2 px-4 shadow-lg backdrop-blur-sm cursor-pointer hover:bg-cyan-900/40 transition-colors flex items-center justify-center gap-2" onClick={() => window.location.reload()}>
-          <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-ping mr-1" />
-          A new version of MEME_CAT is available — click here to update
-        </div>
       )}
 
       {/* 1. Header with Solana Lock, Live Ticker, Phone Alerts, Bot & Trades Modals */}
