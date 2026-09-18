@@ -14,9 +14,9 @@ if (!JWT_SECRET) {
 // Uses HTTPS port 443 only — Render blocks SMTP ports 25/465/587.
 // Free plan: 300 emails/day. Sign up at brevo.com.
 const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
-const BREVO_SENDER  = process.env.BREVO_SENDER_EMAIL || '';
+const BREVO_SENDER  = process.env.BREVO_SENDER_EMAIL || process.env.GMAIL_SENDER_EMAIL || '';
 const hasBrevo = Boolean(BREVO_API_KEY && BREVO_SENDER);
-if (!hasBrevo) console.warn('[AUTH] Set BREVO_API_KEY + BREVO_SENDER_EMAIL in Render env vars.');
+if (!hasBrevo) console.warn('[AUTH] Set BREVO_API_KEY + BREVO_SENDER_EMAIL (or GMAIL_SENDER_EMAIL) in Render env vars.');
 
 function sendViaBrevo(toEmail, subject, htmlContent) {
   return new Promise((resolve, reject) => {
