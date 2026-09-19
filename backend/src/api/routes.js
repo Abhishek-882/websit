@@ -121,15 +121,16 @@ router.get('/tokens', (req, res) => {
 
 /**
  * POST /api/bot/session
- * Generates or fetches dedicated session wallet for connected Phantom address.
+ * Generates or fetches dedicated session wallet for connected Phantom address or email user.
  */
 router.post('/bot/session', async (req, res) => {
   try {
     const { userWallet, botConfig } = req.body;
-    if (!userWallet) return res.status(400).json({ error: 'Missing userWallet' });
+    const userEmail = req.user?.email;
+    if (!userWallet && !userEmail) return res.status(400).json({ error: 'Missing userWallet or authenticated email' });
 
-    const session = await sessionWalletService.createSession(userWallet, botConfig);
-    const balance = await sessionWalletService.getSessionBalance(userWallet);
+    const session = await sessionWalletService.createSession(userWallet, botConfig, userEmail);
+    const balance = await sessionWalletService.getSessionBalance(userWallet, userEmail);
     res.json({ success: true, sessionPubkey: session.sessionPubkey, balanceSol: balance });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -137,17 +138,54 @@ router.post('/bot/session', async (req, res) => {
 });
 
 /**
+ * POST /api/bot/session/import
+ * Imports an existing session keypair using base58 private key, bound to user email & wallet.
+ */
+router.post('/bot/session/import', async (req, res) => {
+  try {
+    const { privateKey, userWallet, botConfig } = req.body;
+    const userEmail = req.user?.email;
+    if (!privateKey) return res.status(400).json({ error: 'Missing privateKey to import' });
+
+    const result = await sessionWalletService.importSession({ privateKey, userWallet, userEmail, botConfig });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/bot/session/reactivate
+ * Reactivates an archived session key from the Backup Vault.
+ */
+router.post('/bot/session/reactivate', async (req, res) => {
+  try {
+    const { sessionPubkey, userWallet } = req.body;
+    const userEmail = req.user?.email;
+    if (!sessionPubkey) return res.status(400).json({ error: 'Missing sessionPubkey' });
+
+    const result = await sessionWalletService.reactivateSession(userWallet, sessionPubkey, userEmail);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * GET /api/bot/session/:wallet
- * Get session wallet pubkey, balance and configuration.
+ * Get session wallet pubkey, balance and configuration (resolves by wallet address OR user email).
  */
 router.get('/bot/session/:wallet', async (req, res) => {
   try {
-    const userWallet = req.params.wallet;
-    const session = await sessionWalletService.getSession(userWallet);
-    const config = await getBotConfig(userWallet);
+    const rawWallet = req.params.wallet;
+    const userWallet = (rawWallet === 'current' || rawWallet === 'undefined' || rawWallet === 'null') ? null : rawWallet;
+    const userEmail = req.user?.email;
+    const session = await sessionWalletService.getSession(userWallet, userEmail);
+    const config = await getBotConfig(userWallet, userEmail);
     res.json({
       success: true,
-      userWallet,
+      userWallet: session?.userWallet || userWallet,
+      userEmail: session?.userEmail || userEmail,
       sessionPubkey: session ? session.sessionPubkey : null,
       balanceSol: session ? session.balanceSol : 0,
       botConfig: config,
@@ -167,8 +205,9 @@ router.get('/bot/session/:wallet', async (req, res) => {
 router.post('/bot/session/delete', async (req, res) => {
   try {
     const { userWallet } = req.body;
-    if (!userWallet) return res.status(400).json({ error: 'Missing userWallet' });
-    const result = await sessionWalletService.deleteAndRefundSession(userWallet);
+    const userEmail = req.user?.email;
+    if (!userWallet && !userEmail) return res.status(400).json({ error: 'Missing userWallet or email' });
+    const result = await sessionWalletService.deleteAndRefundSession(userWallet, userEmail);
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -181,7 +220,10 @@ router.post('/bot/session/delete', async (req, res) => {
  */
 router.get('/bot/session/backups/:wallet', async (req, res) => {
   try {
-    const backups = await sessionWalletService.getBackups(req.params.wallet);
+    const rawWallet = req.params.wallet;
+    const userWallet = (rawWallet === 'current' || rawWallet === 'undefined' || rawWallet === 'null') ? null : rawWallet;
+    const userEmail = req.user?.email;
+    const backups = await sessionWalletService.getBackups(userWallet, userEmail);
     res.json({ success: true, backups: backups || [] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -212,10 +254,11 @@ router.post('/bot/export-key', async (req, res) => {
 router.post('/bot/verify-deposit', async (req, res) => {
   try {
     const { userWallet, txSignature } = req.body;
-    if (!userWallet) {
-      return res.status(400).json({ error: 'Missing userWallet' });
+    const userEmail = req.user?.email;
+    if (!userWallet && !userEmail) {
+      return res.status(400).json({ error: 'Missing userWallet or email' });
     }
-    const result = await sessionWalletService.verifyDeposit(userWallet, txSignature);
+    const result = await sessionWalletService.verifyDeposit(userWallet || userEmail, txSignature);
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -229,9 +272,10 @@ router.post('/bot/verify-deposit', async (req, res) => {
 router.post('/bot/withdraw', async (req, res) => {
   try {
     const { userWallet } = req.body;
-    if (!userWallet) return res.status(400).json({ error: 'Missing userWallet' });
+    const userEmail = req.user?.email;
+    if (!userWallet && !userEmail) return res.status(400).json({ error: 'Missing userWallet or email' });
 
-    const result = await sessionWalletService.withdrawAll(userWallet);
+    const result = await sessionWalletService.withdrawAll(userWallet || userEmail);
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

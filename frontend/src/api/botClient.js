@@ -25,7 +25,19 @@ export const botApi = {
       body: JSON.stringify({ userWallet, botConfig }),
     }),
 
-  getSession: (wallet) => request(`/session/${wallet}`),
+  importSession: (privateKey, userWallet) =>
+    request('/session/import', {
+      method: 'POST',
+      body: JSON.stringify({ privateKey, userWallet }),
+    }),
+
+  reactivateSession: (sessionPubkey, userWallet) =>
+    request('/session/reactivate', {
+      method: 'POST',
+      body: JSON.stringify({ sessionPubkey, userWallet }),
+    }),
+
+  getSession: (wallet) => request(`/session/${wallet || 'current'}`),
 
   deleteSession: (userWallet) =>
     request('/session/delete', {

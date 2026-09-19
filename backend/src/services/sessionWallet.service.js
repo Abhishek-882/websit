@@ -2,7 +2,7 @@ import { Keypair, Connection, PublicKey, Transaction,
          SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import crypto from 'crypto';
-import { saveSessionWallet, getSessionWallet, deactivateSession, archiveSessionWallet, getArchivedSessions, getActiveSetFile, getSetFiles, setActiveSetFile } from '../db/database.js';
+import { saveSessionWallet, getSessionWallet, deactivateSession, archiveSessionWallet, getArchivedSessions, reactivateSessionWallet, getActiveSetFile, getSetFiles, setActiveSetFile } from '../db/database.js';
 
 const ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_SECRET || 'MEME_CAT_32_CHAR_SECRET_KEY!99';
 const RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
@@ -25,11 +25,11 @@ export class SessionWalletService {
   /**
    * Create or retrieve a session wallet for a user.
    */
-  async createSession(userWallet, botConfig = {}) {
+  async createSession(userWallet, botConfig = {}, userEmail = null) {
     // Check if user has an active set file bound to the session
     const activeSet = await getActiveSetFile(userWallet);
 
-    const existing = await getSessionWallet(userWallet);
+    const existing = await getSessionWallet(userWallet, userEmail);
     if (existing) {
       return { sessionPubkey: existing.session_pubkey };
     }
@@ -44,21 +44,87 @@ export class SessionWalletService {
 
     await saveSessionWallet({
       userWallet,
+      userEmail,
       sessionPubkey:    pubkey,
       encryptedPrivkey,
       botConfig,
     });
 
-    console.log(`[SESSION] Created session wallet for ${userWallet.slice(0,8)}... → ${pubkey.slice(0,8)}...`);
+    console.log(`[SESSION] Created session wallet for ${userEmail || userWallet?.slice(0,8)}... → ${pubkey.slice(0,8)}...`);
     return { sessionPubkey: pubkey };
+  }
+
+  /**
+   * Import an existing session Keypair using raw Base58 secret key.
+   */
+  async importSession({ privateKey, userWallet, userEmail = null, botConfig = {} }) {
+    if (!privateKey) throw new Error('Private key is required to import session');
+    let secretKey;
+    try {
+      secretKey = bs58.decode(privateKey.trim());
+      if (secretKey.length !== 64) {
+        throw new Error(`Invalid secret key length: expected 64 bytes, got ${secretKey.length}`);
+      }
+    } catch (err) {
+      throw new Error(`Invalid Base58 private key format: ${err.message}`);
+    }
+
+    const keypair = Keypair.fromSecretKey(secretKey);
+    const sessionPubkey = keypair.publicKey.toBase58();
+    const encryptedPrivkey = this._encrypt(privateKey.trim());
+
+    await saveSessionWallet({
+      userWallet,
+      userEmail,
+      sessionPubkey,
+      encryptedPrivkey,
+      botConfig,
+    });
+
+    let balanceSol = 0;
+    try {
+      const lamports = await this.connection.getBalance(keypair.publicKey);
+      balanceSol = lamports / LAMPORTS_PER_SOL;
+    } catch (balErr) {
+      console.warn(`[SESSION IMPORT] Balance lookup notice:`, balErr.message);
+    }
+
+    console.log(`[SESSION] Successfully imported session wallet ${sessionPubkey.slice(0, 8)}... (${balanceSol} SOL) for ${userEmail || userWallet}`);
+    return {
+      success: true,
+      sessionPubkey,
+      balanceSol,
+      userWallet,
+      userEmail,
+    };
+  }
+
+  /**
+   * Reactivate an archived session keypair from the backup vault.
+   */
+  async reactivateSession(userWallet, sessionPubkey, userEmail = null) {
+    if (!sessionPubkey) throw new Error('Missing sessionPubkey to reactivate');
+    const session = await reactivateSessionWallet(userWallet, sessionPubkey, userEmail);
+    let balanceSol = 0;
+    try {
+      const lamports = await this.connection.getBalance(new PublicKey(session.session_pubkey));
+      balanceSol = lamports / LAMPORTS_PER_SOL;
+    } catch (balErr) {
+      console.warn(`[SESSION REACTIVATE] Balance lookup notice:`, balErr.message);
+    }
+    return {
+      success: true,
+      sessionPubkey: session.session_pubkey,
+      balanceSol,
+    };
   }
 
   /**
    * Reconstruct the session Keypair for signing transactions.
    */
-  async getKeypair(userWallet) {
-    const session = await getSessionWallet(userWallet);
-    if (!session) throw new Error(`No active session for wallet ${userWallet}`);
+  async getKeypair(userWallet, userEmail = null) {
+    const session = await getSessionWallet(userWallet, userEmail);
+    if (!session) throw new Error(`No active session for wallet ${userWallet || userEmail}`);
     const privkey = this._decrypt(session.encrypted_privkey);
     const secretKey = bs58.decode(privkey);
     return Keypair.fromSecretKey(secretKey);
@@ -67,8 +133,8 @@ export class SessionWalletService {
   /**
    * Get the session wallet's current SOL balance.
    */
-  async getSessionBalance(userWallet) {
-    const session = await getSessionWallet(userWallet);
+  async getSessionBalance(userWallet, userEmail = null) {
+    const session = await getSessionWallet(userWallet, userEmail);
     if (!session) return 0;
     try {
       const lamports = await this.connection.getBalance(new PublicKey(session.session_pubkey));
@@ -81,14 +147,16 @@ export class SessionWalletService {
   /**
    * Get session wallet details.
    */
-  async getSession(userWallet) {
-    const session = await getSessionWallet(userWallet);
+  async getSession(userWallet, userEmail = null) {
+    const session = await getSessionWallet(userWallet, userEmail);
     if (!session) return null;
-    const balance = await this.getSessionBalance(userWallet);
+    const balance = await this.getSessionBalance(userWallet, userEmail);
     return {
       sessionPubkey: session.session_pubkey,
       balanceSol: balance,
       isActive: session.is_active,
+      userWallet: session.user_wallet,
+      userEmail: session.user_email,
       createdAt: session.created_at,
       sessionStartedAt: session.session_started_at || session.created_at,
     };
@@ -245,8 +313,8 @@ export class SessionWalletService {
    * 3. Permanently archives the private key in the backup vault so it is NEVER lost.
    * 4. Clears active session so user can create a brand new one immediately.
    */
-  async deleteAndRefundSession(userWallet) {
-    const session = await getSessionWallet(userWallet);
+  async deleteAndRefundSession(userWallet, userEmail = null) {
+    const session = await getSessionWallet(userWallet, userEmail);
     if (!session) {
       return {
         success: true,
@@ -260,12 +328,12 @@ export class SessionWalletService {
     let refundedSol = 0;
 
     try {
-      const keypair = await this.getKeypair(userWallet);
+      const keypair = await this.getKeypair(userWallet, userEmail);
       const balance = await this.connection.getBalance(keypair.publicKey);
       const networkFee = 5000; // ~0.000005 SOL
       const transferAmount = balance - networkFee;
 
-      if (transferAmount > 0) {
+      if (transferAmount > 0 && userWallet) {
         console.log(`[SESSION DELETE] Found ${balance / LAMPORTS_PER_SOL} SOL. Automatically refunding ${transferAmount / LAMPORTS_PER_SOL} SOL to ${userWallet.slice(0, 8)}...`);
         const tx = new Transaction().add(
           SystemProgram.transfer({
@@ -285,7 +353,8 @@ export class SessionWalletService {
 
     // Always archive the encrypted key in the permanent backup vault so funds/keys are NEVER lost
     await archiveSessionWallet({
-      userWallet,
+      userWallet: session.user_wallet || userWallet,
+      userEmail: session.user_email || userEmail,
       sessionPubkey: session.session_pubkey,
       encryptedPrivkey: session.encrypted_privkey,
       refundTx,
@@ -295,7 +364,7 @@ export class SessionWalletService {
     });
 
     // Remove from active sessions
-    await deactivateSession(userWallet);
+    await deactivateSession(userWallet, userEmail);
 
     return {
       success: true,
@@ -308,10 +377,11 @@ export class SessionWalletService {
     };
   }
 
-  async getBackups(userWallet) {
-    const raw = await getArchivedSessions(userWallet);
+  async getBackups(userWallet, userEmail = null) {
+    const raw = await getArchivedSessions(userWallet, userEmail);
     return (raw || []).map(b => ({
       session_pubkey: b.session_pubkey,
+      user_email: b.user_email,
       refund_tx: b.refund_tx,
       refunded_sol: b.refunded_sol,
       archived_at: b.archived_at,

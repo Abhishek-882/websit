@@ -65,16 +65,21 @@ export default function BotControlsModal({ isOpen, onClose }) {
   const [showExportModal, setShowExportModal] = useState(false);
   const [copiedExportKey, setCopiedExportKey] = useState(false);
 
+  // Import Session Key state
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importKeyInput, setImportKeyInput] = useState('');
+  const [isImportingKey, setIsImportingKey] = useState(false);
+  const [isReactivatingKey, setIsReactivatingKey] = useState(false);
+
   // Backup Vault state
   const [backups, setBackups] = useState([]);
   const [isBackupsOpen, setIsBackupsOpen] = useState(false);
   const [loadingBackups, setLoadingBackups] = useState(false);
 
   const loadBackups = async () => {
-    if (!connectedWallet) return;
     setLoadingBackups(true);
     try {
-      const res = await botApi.getSessionBackups(connectedWallet);
+      const res = await botApi.getSessionBackups(connectedWallet || 'current');
       if (res?.backups) setBackups(res.backups);
     } catch (err) {
       console.warn('Failed to load session backups:', err.message);
@@ -84,12 +89,55 @@ export default function BotControlsModal({ isOpen, onClose }) {
   };
 
   useEffect(() => {
-    if (isOpen && connectedWallet) {
+    if (isOpen) {
       loadBackups();
     }
   }, [isOpen, connectedWallet]);
 
   if (!isOpen) return null;
+
+  const handleImportSessionKey = async () => {
+    if (!importKeyInput || !importKeyInput.trim()) {
+      alert('Please enter a valid Base58 private key.');
+      return;
+    }
+    setIsImportingKey(true);
+    setStatusMsg('Importing and activating session keypair...');
+    try {
+      const res = await botApi.importSession(importKeyInput.trim(), connectedWallet);
+      setSessionPubkey(res.sessionPubkey);
+      setSessionBalance(res.balanceSol || 0);
+      setShowImportModal(false);
+      setImportKeyInput('');
+      setStatusMsg(`Session wallet imported! Public Key: ${res.sessionPubkey.slice(0, 6)}... (Balance: ${res.balanceSol?.toFixed(4) || '0.0000'} SOL)`);
+      setTimeout(() => setStatusMsg(null), 5000);
+      loadBackups();
+    } catch (err) {
+      alert(`Failed to import session key: ${err.message}`);
+      setStatusMsg(null);
+    } finally {
+      setIsImportingKey(false);
+    }
+  };
+
+  const handleReactivateSession = async (pubkey) => {
+    if (!pubkey) return;
+    setIsReactivatingKey(true);
+    setStatusMsg(`Reactivating session ${pubkey.slice(0, 6)}...`);
+    try {
+      const res = await botApi.reactivateSession(pubkey, connectedWallet);
+      setSessionPubkey(res.sessionPubkey);
+      setSessionBalance(res.balanceSol || 0);
+      setStatusMsg(`Session ${pubkey.slice(0, 6)}... reactivated! Balance: ${res.balanceSol?.toFixed(4) || '0.0000'} SOL`);
+      setTimeout(() => setStatusMsg(null), 5000);
+      loadBackups();
+    } catch (err) {
+      alert(`Failed to reactivate session: ${err.message}`);
+      setStatusMsg(null);
+    } finally {
+      setIsReactivatingKey(false);
+    }
+  };
 
   const handleCreateSession = async () => {
     if (!connectedWallet) {
@@ -581,6 +629,17 @@ export default function BotControlsModal({ isOpen, onClose }) {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {/* Import Session Key Button */}
+                    <button
+                      type="button"
+                      onClick={() => setShowImportModal(true)}
+                      className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 hover:bg-slate-700 text-cyan-300 text-xs font-semibold transition-all flex items-center gap-1"
+                      title="Import an existing session private key"
+                    >
+                      <IconKey className="w-3 h-3 text-cyan-400" />
+                      <span>Import Key</span>
+                    </button>
+
                     {/* Export Private Key Button */}
                     <button
                       type="button"
@@ -621,16 +680,32 @@ export default function BotControlsModal({ isOpen, onClose }) {
             </div>
           ) : (
             <div className="p-4 rounded-lg bg-slate-900/60 border border-dashed border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
-              <span className="text-xs text-slate-400">
-                No active session wallet. Generate one to enable 24/7 background execution.
-              </span>
-              <button
-                onClick={handleCreateSession}
-                disabled={loading || !connectedWallet}
-                className="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition-all disabled:opacity-50 shrink-0"
-              >
-                {loading ? 'Creating...' : 'Create Session Wallet'}
-              </button>
+              <div>
+                <span className="text-xs text-slate-300 font-semibold block">
+                  No active session wallet
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  Generate a fresh trading keypair or import your existing session key to enable 24/7 background execution.
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowImportModal(true)}
+                  className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 font-bold text-xs transition-all flex items-center gap-1.5"
+                >
+                  <IconKey className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Import Key</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateSession}
+                  disabled={loading}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition-all disabled:opacity-50"
+                >
+                  {loading ? 'Creating...' : 'Create Fresh Session'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -748,15 +823,29 @@ export default function BotControlsModal({ isOpen, onClose }) {
                             )}
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleExportPrivateKey(b.session_pubkey)}
-                          disabled={isExportingKey}
-                          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 text-[11px] font-semibold transition-all shrink-0 flex items-center gap-1 self-start sm:self-auto"
-                        >
-                          <IconKey className="w-2.5 h-2.5 text-amber-400" />
-                          <span>Export Key</span>
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0 self-start sm:self-auto">
+                          {b.session_pubkey !== sessionPubkey && (
+                            <button
+                              type="button"
+                              onClick={() => handleReactivateSession(b.session_pubkey)}
+                              disabled={isReactivatingKey}
+                              className="px-2 py-1 rounded bg-emerald-950/80 hover:bg-emerald-900/90 border border-emerald-800 text-emerald-300 text-[11px] font-semibold transition-all flex items-center gap-1"
+                              title="Restore and activate this session"
+                            >
+                              <IconBolt className="w-2.5 h-2.5 text-emerald-400" />
+                              <span>{isReactivatingKey ? 'Activating...' : 'Re-activate'}</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleExportPrivateKey(b.session_pubkey)}
+                            disabled={isExportingKey}
+                            className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 text-[11px] font-semibold transition-all shrink-0 flex items-center gap-1"
+                          >
+                            <IconKey className="w-2.5 h-2.5 text-amber-400" />
+                            <span>Export Key</span>
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -839,6 +928,71 @@ export default function BotControlsModal({ isOpen, onClose }) {
               >
                 I have saved my backup key
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Import Session Key Modal */}
+        {showImportModal && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+            <div className="relative w-full max-w-lg bg-[#0c101a] border border-cyan-500/70 rounded-2xl shadow-2xl p-5 text-slate-100 space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-cyan-950 text-cyan-400 border border-cyan-800">
+                    <IconKey className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Import Session Keypair</h3>
+                    <p className="text-[11px] text-slate-400">Restore your session wallet and on-chain funds</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setShowImportModal(false); setImportKeyInput(''); }}
+                  className="p-1 text-slate-400 hover:text-white"
+                >
+                  <IconClose className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-cyan-950/40 border border-cyan-800/60 text-cyan-300 text-xs flex items-start gap-2">
+                <IconShield className="w-4 h-4 shrink-0 text-cyan-400 mt-0.5" />
+                <span>
+                  Paste your Base58 session private key below. It will be encrypted with AES-256 and securely bound to your email account and connected Phantom wallet.
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[11px] text-slate-400 block font-mono">
+                  Solana Base58 Private Key
+                </label>
+                <textarea
+                  rows={3}
+                  value={importKeyInput}
+                  onChange={(e) => setImportKeyInput(e.target.value)}
+                  placeholder="Paste your 87-88 character Base58 private key here (e.g. 24VY3xrMzgPd5yp...)"
+                  className="w-full p-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs font-mono text-cyan-300 focus:border-cyan-400 focus:outline-none placeholder:text-slate-600 resize-none break-all"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => { setShowImportModal(false); setImportKeyInput(''); }}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImportSessionKey}
+                  disabled={isImportingKey || !importKeyInput.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition-all disabled:opacity-50 flex items-center gap-1.5 shadow"
+                >
+                  <IconCheck className="w-3.5 h-3.5" />
+                  <span>{isImportingKey ? 'Importing & Verifying...' : 'Import & Activate Session'}</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

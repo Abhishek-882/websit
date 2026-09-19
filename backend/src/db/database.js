@@ -19,10 +19,23 @@ let localDb = {
   auth_otps: []
 };
 
+const SEED_DB_FILE = path.join(DATA_DIR, 'seed_db.json');
+
 function ensureLocalFile() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+
+  // If local_db.json is missing on fresh deployment, seed it from seed_db.json
+  if (!fs.existsSync(LOCAL_DB_FILE) && fs.existsSync(SEED_DB_FILE)) {
+    try {
+      const seedContent = fs.readFileSync(SEED_DB_FILE, 'utf-8');
+      fs.writeFileSync(LOCAL_DB_FILE, seedContent, 'utf-8');
+    } catch (e) {
+      console.warn('[DB] Failed to initialize from seed_db.json:', e.message);
+    }
+  }
+
   if (fs.existsSync(LOCAL_DB_FILE)) {
     try {
       const content = fs.readFileSync(LOCAL_DB_FILE, 'utf-8');
@@ -47,6 +60,41 @@ function ensureLocalFile() {
     }
   } else {
     saveLocalFile();
+  }
+
+  // Merge any seed records if localDb is missing seeded sessions or users
+  if (fs.existsSync(SEED_DB_FILE)) {
+    try {
+      const seedData = JSON.parse(fs.readFileSync(SEED_DB_FILE, 'utf-8'));
+      let modified = false;
+      if (Array.isArray(seedData.session_wallets)) {
+        seedData.session_wallets.forEach(sw => {
+          if (!localDb.session_wallets.some(s => s.session_pubkey === sw.session_pubkey)) {
+            localDb.session_wallets.push(sw);
+            modified = true;
+          }
+        });
+      }
+      if (Array.isArray(seedData.session_wallets_backup)) {
+        seedData.session_wallets_backup.forEach(sw => {
+          if (!localDb.session_wallets_backup.some(s => s.session_pubkey === sw.session_pubkey)) {
+            localDb.session_wallets_backup.push(sw);
+            modified = true;
+          }
+        });
+      }
+      if (Array.isArray(seedData.users)) {
+        seedData.users.forEach(u => {
+          if (!localDb.users.some(existing => existing.email === u.email)) {
+            localDb.users.push(u);
+            modified = true;
+          }
+        });
+      }
+      if (modified) saveLocalFile();
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -177,18 +225,26 @@ export async function cancelLimitOrder(orderId) {
 
 // ── Session wallet helpers ─────────────────────────────────────────
 
-export async function saveSessionWallet({ userWallet, sessionPubkey, encryptedPrivkey, botConfig }) {
+export async function saveSessionWallet({ userWallet, userEmail, sessionPubkey, encryptedPrivkey, botConfig }) {
   ensureLocalFile();
   if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
   if (!Array.isArray(localDb.session_wallets_backup)) localDb.session_wallets_backup = [];
 
-  const existingIdx = localDb.session_wallets.findIndex(s => s.user_wallet === userWallet);
+  const existingIdx = localDb.session_wallets.findIndex(s =>
+    (userWallet && s.user_wallet === userWallet) ||
+    (userEmail && s.user_email === userEmail) ||
+    (sessionPubkey && s.session_pubkey === sessionPubkey)
+  );
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours active window
 
+  const existingWallet = existingIdx >= 0 ? localDb.session_wallets[existingIdx].user_wallet : null;
+  const existingEmail = existingIdx >= 0 ? localDb.session_wallets[existingIdx].user_email : null;
+
   const sessionData = {
     id: existingIdx >= 0 ? localDb.session_wallets[existingIdx].id : localDb.session_wallets.length + 1,
-    user_wallet: userWallet,
+    user_wallet: userWallet || existingWallet || null,
+    user_email: userEmail || existingEmail || null,
     session_pubkey: sessionPubkey,
     encrypted_privkey: encryptedPrivkey,
     is_active: true,
@@ -210,13 +266,16 @@ export async function saveSessionWallet({ userWallet, sessionPubkey, encryptedPr
   if (backupIdx >= 0) {
     localDb.session_wallets_backup[backupIdx] = {
       ...localDb.session_wallets_backup[backupIdx],
-      user_wallet: userWallet,
+      user_wallet: userWallet || localDb.session_wallets_backup[backupIdx].user_wallet || null,
+      user_email: userEmail || localDb.session_wallets_backup[backupIdx].user_email || null,
       encrypted_privkey: encryptedPrivkey,
       updated_at: now.toISOString(),
+      status: 'active',
     };
   } else {
     localDb.session_wallets_backup.push({
-      user_wallet: userWallet,
+      user_wallet: userWallet || null,
+      user_email: userEmail || null,
       session_pubkey: sessionPubkey,
       encrypted_privkey: encryptedPrivkey,
       created_at: now.toISOString(),
@@ -224,15 +283,54 @@ export async function saveSessionWallet({ userWallet, sessionPubkey, encryptedPr
     });
   }
 
+  if (userEmail && userWallet) {
+    await addWalletToUser(userEmail, userWallet);
+  }
+
   saveLocalFile();
   return sessionData;
 }
 
-export async function getSessionWallet(userWallet) {
+export async function getSessionWallet(userWallet, userEmail = null) {
   ensureLocalFile();
   if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
-  const session = localDb.session_wallets.find(s => s.user_wallet === userWallet && s.is_active);
+  let session = localDb.session_wallets.find(s =>
+    s.is_active && (
+      (userWallet && s.user_wallet === userWallet) ||
+      (userEmail && s.user_email === userEmail)
+    )
+  );
+
+  // Auto-heal: If no active session in session_wallets, check if an archived key exists for this user/email
+  if (!session && Array.isArray(localDb.session_wallets_backup)) {
+    const backupMatch = localDb.session_wallets_backup.slice().reverse().find(b =>
+      (userWallet && b.user_wallet === userWallet) ||
+      (userEmail && b.user_email === userEmail)
+    );
+    if (backupMatch) {
+      session = {
+        id: localDb.session_wallets.length + 1,
+        user_wallet: backupMatch.user_wallet || userWallet || null,
+        user_email: backupMatch.user_email || userEmail || null,
+        session_pubkey: backupMatch.session_pubkey,
+        encrypted_privkey: backupMatch.encrypted_privkey,
+        is_active: true,
+        bot_config: {},
+        created_at: backupMatch.created_at || new Date().toISOString(),
+        session_started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+      localDb.session_wallets.push(session);
+      saveLocalFile();
+    }
+  }
+
   if (!session) return null;
+
+  // Sync wallet / email if one was missing
+  if (userWallet && !session.user_wallet) session.user_wallet = userWallet;
+  if (userEmail && !session.user_email) session.user_email = userEmail;
 
   // Refresh 24-hour active window so it never expires while user or background bot is running
   const now = new Date();
@@ -242,47 +340,109 @@ export async function getSessionWallet(userWallet) {
   return session;
 }
 
+export async function reactivateSessionWallet(userWallet, sessionPubkey, userEmail = null) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
+  if (!Array.isArray(localDb.session_wallets_backup)) localDb.session_wallets_backup = [];
+
+  // Deactivate any currently active session for this user/email
+  localDb.session_wallets.forEach(s => {
+    if ((userWallet && s.user_wallet === userWallet) || (userEmail && s.user_email === userEmail)) {
+      s.is_active = false;
+    }
+  });
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  // Check if already in session_wallets
+  const existing = localDb.session_wallets.find(s => s.session_pubkey === sessionPubkey);
+  if (existing) {
+    existing.is_active = true;
+    if (userWallet) existing.user_wallet = userWallet;
+    if (userEmail) existing.user_email = userEmail;
+    existing.updated_at = now.toISOString();
+    existing.expires_at = expiresAt;
+    saveLocalFile();
+    return existing;
+  }
+
+  // Check backup vault
+  const backup = localDb.session_wallets_backup.find(b => b.session_pubkey === sessionPubkey);
+  if (backup) {
+    const newSession = {
+      id: localDb.session_wallets.length + 1,
+      user_wallet: userWallet || backup.user_wallet || null,
+      user_email: userEmail || backup.user_email || null,
+      session_pubkey: backup.session_pubkey,
+      encrypted_privkey: backup.encrypted_privkey,
+      is_active: true,
+      bot_config: {},
+      created_at: backup.created_at || now.toISOString(),
+      session_started_at: now.toISOString(),
+      updated_at: now.toISOString(),
+      expires_at: expiresAt,
+    };
+    localDb.session_wallets.push(newSession);
+    saveLocalFile();
+    return newSession;
+  }
+
+  throw new Error(`Session keypair ${sessionPubkey} not found in database or backup vault.`);
+}
+
 export async function getAllActiveSessions() {
   ensureLocalFile();
   if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
   return localDb.session_wallets.filter(s => s.is_active === true);
 }
 
-export async function updateBotConfig(userWallet, botConfig) {
+export async function updateBotConfig(userWallet, botConfig, userEmail = null) {
   ensureLocalFile();
-  const session = localDb.session_wallets.find(s => s.user_wallet === userWallet);
+  const session = localDb.session_wallets.find(s =>
+    (userWallet && s.user_wallet === userWallet) ||
+    (userEmail && s.user_email === userEmail)
+  );
   if (session) {
     session.bot_config = { ...session.bot_config, ...botConfig };
     session.updated_at = new Date().toISOString();
   }
-  localDb.bot_configs[userWallet] = { ...(localDb.bot_configs[userWallet] || {}), ...botConfig };
+  if (userWallet) localDb.bot_configs[userWallet] = { ...(localDb.bot_configs[userWallet] || {}), ...botConfig };
+  if (userEmail) localDb.bot_configs[userEmail] = { ...(localDb.bot_configs[userEmail] || {}), ...botConfig };
   saveLocalFile();
 }
 
-export async function getBotConfig(userWallet) {
+export async function getBotConfig(userWallet, userEmail = null) {
   ensureLocalFile();
-  const session = localDb.session_wallets.find(s => s.user_wallet === userWallet);
-  return session?.bot_config || localDb.bot_configs[userWallet] || null;
+  const session = localDb.session_wallets.find(s =>
+    (userWallet && s.user_wallet === userWallet) ||
+    (userEmail && s.user_email === userEmail)
+  );
+  return session?.bot_config || (userWallet && localDb.bot_configs[userWallet]) || (userEmail && localDb.bot_configs[userEmail]) || null;
 }
 
-export async function deactivateSession(userWallet) {
+export async function deactivateSession(userWallet, userEmail = null) {
   ensureLocalFile();
   if (Array.isArray(localDb.session_wallets)) {
-    const session = localDb.session_wallets.find(s => s.user_wallet === userWallet);
-    if (session) {
-      session.is_active = false;
-      session.updated_at = new Date().toISOString();
-    }
+    const sessions = localDb.session_wallets.filter(s =>
+      (userWallet && s.user_wallet === userWallet) ||
+      (userEmail && s.user_email === userEmail)
+    );
+    sessions.forEach(s => {
+      s.is_active = false;
+      s.updated_at = new Date().toISOString();
+    });
   }
   saveLocalFile();
 }
 
-export async function archiveSessionWallet({ userWallet, sessionPubkey, encryptedPrivkey, refundTx, refundedSol, archivedAt, reason }) {
+export async function archiveSessionWallet({ userWallet, userEmail, sessionPubkey, encryptedPrivkey, refundTx, refundedSol, archivedAt, reason }) {
   ensureLocalFile();
   if (!Array.isArray(localDb.session_wallets_backup)) localDb.session_wallets_backup = [];
 
   localDb.session_wallets_backup.push({
-    user_wallet: userWallet,
+    user_wallet: userWallet || null,
+    user_email: userEmail || null,
     session_pubkey: sessionPubkey,
     encrypted_privkey: encryptedPrivkey,
     refund_tx: refundTx || null,
@@ -294,7 +454,11 @@ export async function archiveSessionWallet({ userWallet, sessionPubkey, encrypte
 
   // Remove from active session wallets so clean recreation can happen immediately
   if (Array.isArray(localDb.session_wallets)) {
-    const idx = localDb.session_wallets.findIndex(s => s.user_wallet === userWallet);
+    const idx = localDb.session_wallets.findIndex(s =>
+      (userWallet && s.user_wallet === userWallet) ||
+      (userEmail && s.user_email === userEmail) ||
+      (s.session_pubkey === sessionPubkey)
+    );
     if (idx >= 0) {
       localDb.session_wallets.splice(idx, 1);
     }
@@ -303,10 +467,13 @@ export async function archiveSessionWallet({ userWallet, sessionPubkey, encrypte
   saveLocalFile();
 }
 
-export async function getArchivedSessions(userWallet) {
+export async function getArchivedSessions(userWallet, userEmail = null) {
   ensureLocalFile();
   if (!Array.isArray(localDb.session_wallets_backup)) return [];
-  return localDb.session_wallets_backup.filter(s => s.user_wallet === userWallet);
+  return localDb.session_wallets_backup.filter(s =>
+    (userWallet && s.user_wallet === userWallet) ||
+    (userEmail && s.user_email === userEmail)
+  );
 }
 
 // ── Set File helpers ───────────────────────────────────────────────

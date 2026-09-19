@@ -34,10 +34,16 @@ export default function WalletConnector() {
   useEffect(() => {
     setConnected(address || null);
     if (!address) {
-      // Only reset session state if a previously connected wallet was explicitly disconnected
-      if (prevAddressRef.current) {
-        setSessionBalance(0);
-        setSessionPubkey(null);
+      // If user is authenticated via email, query session for current authenticated email account
+      const authToken = localStorage.getItem('auth_token');
+      if (authToken) {
+        botApi.getSession('current').then(res => {
+          if (res?.sessionPubkey) {
+            setSessionPubkey(res.sessionPubkey);
+            setSessionBalance(res.balanceSol || 0);
+            if (res.botConfig) setBotConfig(res.botConfig);
+          }
+        }).catch(() => {});
       }
       prevAddressRef.current = null;
       return;
@@ -59,8 +65,17 @@ export default function WalletConnector() {
           setSessionBalance(res.balanceSol || 0);
           if (res.botConfig) setBotConfig(res.botConfig);
         } else {
-          setSessionPubkey(null);
-          setSessionBalance(0);
+          // If query by wallet failed, try query by authenticated email session
+          botApi.getSession('current').then(res => {
+            if (res?.sessionPubkey) {
+              setSessionPubkey(res.sessionPubkey);
+              setSessionBalance(res.balanceSol || 0);
+              if (res.botConfig) setBotConfig(res.botConfig);
+            }
+          }).catch(() => {
+            setSessionPubkey(null);
+            setSessionBalance(0);
+          });
         }
         // Trades
         if (tradesRes.status === 'fulfilled') {
