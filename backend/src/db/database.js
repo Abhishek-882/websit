@@ -332,6 +332,15 @@ export async function saveSetFile(userWallet, setFile) {
     setFile.isActive = true;
     // Deactivate all other set files for this user so only one is active
     userFiles.forEach(s => { s.isActive = false; });
+
+    // Sync active set file reference to user's active session
+    if (Array.isArray(localDb.session_wallets)) {
+      const session = localDb.session_wallets.find(s => s.user_wallet === userWallet && s.is_active);
+      if (session) {
+        session.active_set_file_id = setFile.id;
+        session.updated_at = now;
+      }
+    }
   }
 
   if (existingIdx >= 0) {
@@ -406,6 +415,16 @@ export async function setActiveSetFile(userWallet, setFileId) {
       s.updatedAt = new Date().toISOString();
     }
   }
+
+  // Sync with active session wallet
+  if (Array.isArray(localDb.session_wallets)) {
+    const session = localDb.session_wallets.find(s => s.user_wallet === userWallet && s.is_active);
+    if (session) {
+      session.active_set_file_id = activated ? activated.id : null;
+      session.updated_at = new Date().toISOString();
+    }
+  }
+
   saveLocalFile();
   return activated;
 }

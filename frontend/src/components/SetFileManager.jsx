@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
-import { IconBot, IconCheck, IconTrash, IconClose } from './Icons';
+import { IconBot, IconCheck, IconTrash, IconClose, IconAlertTriangle } from './Icons';
 
 export default function SetFileManager() {
+  const { setVisible } = useWalletModal();
   const connectedWallet = useBotStore(s => s.connectedWallet);
   const setFiles = useBotStore(s => s.setFiles);
   const setSetFiles = useBotStore(s => s.setSetFiles);
@@ -13,6 +15,7 @@ export default function SetFileManager() {
   const [isEditing, setIsEditing] = useState(false);
   const [currentFile, setCurrentFile] = useState(null);
   const [nameError, setNameError] = useState(null);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState(null);
 
   // Sync set files from backend or auto-heal from localStorage on mount/wallet change
   useEffect(() => {
@@ -49,7 +52,12 @@ export default function SetFileManager() {
   }, [connectedWallet]);
 
   const handleActivate = async (file) => {
-    if (!connectedWallet || !file) return;
+    if (!connectedWallet) {
+      setVisible(true);
+      alert('Please connect your Phantom / Solflare wallet first.');
+      return;
+    }
+    if (!file) return;
     const fileId = file.id || file._id;
     if (!fileId) {
       alert('This set file has no ID. Please edit and save it once to assign an ID.');
@@ -57,16 +65,22 @@ export default function SetFileManager() {
     }
     try {
       await botApi.activateSetFile(connectedWallet, fileId);
-      setActiveSetFile({ ...file, id: fileId });
+      setActiveSetFile({ ...file, id: fileId, isActive: true });
       const res = await botApi.getSetFiles(connectedWallet);
       setSetFiles(res.setFiles || []);
+      setSaveSuccessMsg(`"${file.name}" is now the ACTIVE trading set file!`);
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
     } catch (err) {
       alert(err.message);
     }
   };
 
   const handleDeactivate = async () => {
-    if (!connectedWallet) return;
+    if (!connectedWallet) {
+      setVisible(true);
+      alert('Please connect your Phantom / Solflare wallet first.');
+      return;
+    }
     try {
       await botApi.deactivateSetFile(connectedWallet);
       setActiveSetFile(null);
@@ -78,7 +92,11 @@ export default function SetFileManager() {
   };
 
   const handleDelete = async (fileOrId) => {
-    if (!connectedWallet) return;
+    if (!connectedWallet) {
+      setVisible(true);
+      alert('Please connect your Phantom / Solflare wallet first.');
+      return;
+    }
     const fileId = typeof fileOrId === 'object' ? (fileOrId.id || fileOrId._id) : fileOrId;
     if (!fileId) {
       alert('Cannot delete file: missing ID');
@@ -104,13 +122,22 @@ export default function SetFileManager() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!connectedWallet) return;
+    if (!connectedWallet) {
+      setVisible(true);
+      alert('Please connect your Phantom or Solflare wallet first to save set files.');
+      return;
+    }
+
+    if (!currentFile?.name || !currentFile.name.trim()) {
+      setNameError("Profile name is required");
+      return;
+    }
 
     if (currentFile.name.length > 50) {
       setNameError("Name must be max 50 characters");
       return;
     }
-    const isTaken = setFiles.some(f => f.name.toLowerCase() === currentFile.name.toLowerCase() && f.id !== currentFile.id);
+    const isTaken = setFiles.some(f => (f.name || '').toLowerCase() === currentFile.name.trim().toLowerCase() && f.id !== currentFile.id);
     if (isTaken) {
       setNameError("Name is already taken for this wallet");
       return;
@@ -118,13 +145,12 @@ export default function SetFileManager() {
     setNameError(null);
 
     const fileId = currentFile.id || `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const shouldBeActive = currentFile.isActive !== undefined ? currentFile.isActive : (setFiles.length === 0 || !activeSetFile);
 
     const payload = {
       ...currentFile,
       id: fileId,
       name: currentFile.name.trim(),
-      isActive: shouldBeActive,
+      isActive: true, // Auto-activate on save per user agreement
       tradeSizeSol: Number(currentFile.tradeSizeSol || 0.1),
       slippageBps: Number(currentFile.slippageBps || 500),
       orderType: currentFile.orderType || 'market',
@@ -179,6 +205,8 @@ export default function SetFileManager() {
       if (active) setActiveSetFile(active);
       setIsEditing(false);
       setCurrentFile(null);
+      setSaveSuccessMsg(`Profile "${payload.name}" saved & set to ACTIVE for 24/7 background trading!`);
+      setTimeout(() => setSaveSuccessMsg(null), 5000);
     } catch (err) {
       alert(err.message);
     }
@@ -225,6 +253,31 @@ export default function SetFileManager() {
   if (isEditing) {
     return (
       <div className="space-y-4">
+        {/* Wallet Disconnected Banner */}
+        {!connectedWallet && (
+          <div className="p-3 rounded-lg bg-amber-950/70 border border-amber-700/60 text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
+            <div className="flex items-center gap-2">
+              <IconAlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+              <span>Wallet disconnected. Connect your Phantom or Solflare wallet to save set files.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setVisible(true)}
+              className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded transition-colors shrink-0"
+            >
+              Connect Wallet
+            </button>
+          </div>
+        )}
+
+        {/* Save Success Banner */}
+        {saveSuccessMsg && (
+          <div className="p-2.5 rounded-lg bg-emerald-950/80 border border-emerald-700 text-emerald-300 text-xs font-mono flex items-center gap-2">
+            <IconCheck className="w-4 h-4 shrink-0 text-emerald-400" />
+            <span>{saveSuccessMsg}</span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between pb-2 border-b border-slate-800">
           <h3 className="text-sm font-bold text-white">Edit Set File</h3>
           <button onClick={() => setIsEditing(false)} className="text-slate-400 hover:text-white">
@@ -304,31 +357,31 @@ export default function SetFileManager() {
           {/* On-chain TP / SL — placed as Jupiter sell limit orders at buy time */}
           <div className="pt-2">
             <label className="text-[11px] text-slate-400 block mb-1.5">
-              Exit Orders — On-Chain TP / SL
+              Exit Orders — On-Chain TP / SL (Optional)
             </label>
-            <p className="text-[9px] text-slate-500 mb-2">Placed as Jupiter sell limit orders the moment a buy executes. Trigger on-chain — no server needed.</p>
+            <p className="text-[9px] text-slate-500 mb-2">Placed as Jupiter sell limit orders the moment a buy executes. Trigger on-chain — zero server dependency.</p>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-slate-400 block mb-1">Take Profit (%)</label>
                 <input
-                  type="number" min="1" max="10000"
-                  placeholder="e.g. 50"
-                  value={currentFile.tpPct || ''}
-                  onChange={e => setCurrentFile({...currentFile, tpPct: parseFloat(e.target.value) || null})}
+                  type="number"
+                  placeholder="e.g. 50 (optional)"
+                  value={currentFile.tpPct ?? ''}
+                  onChange={e => setCurrentFile({...currentFile, tpPct: e.target.value === '' ? null : Math.max(0, parseFloat(e.target.value) || 0)})}
                   className="w-full px-2 py-1.5 bg-slate-900 border border-emerald-900 rounded text-xs text-white placeholder-slate-600"
                 />
-                <p className="text-[9px] text-slate-500 mt-0.5">Sell at +{currentFile.tpPct || '?'}% above buy price</p>
+                <p className="text-[9px] text-slate-500 mt-0.5">Sell at +{currentFile.tpPct || 'off'}% above buy price</p>
               </div>
               <div>
                 <label className="text-[10px] text-slate-400 block mb-1">Stop Loss (%)</label>
                 <input
-                  type="number" min="1" max="99"
-                  placeholder="e.g. 20"
-                  value={currentFile.slPct || ''}
-                  onChange={e => setCurrentFile({...currentFile, slPct: parseFloat(e.target.value) || null})}
+                  type="number"
+                  placeholder="e.g. 20 (optional)"
+                  value={currentFile.slPct ?? ''}
+                  onChange={e => setCurrentFile({...currentFile, slPct: e.target.value === '' ? null : Math.max(0, parseFloat(e.target.value) || 0)})}
                   className="w-full px-2 py-1.5 bg-slate-900 border border-red-900 rounded text-xs text-white placeholder-slate-600"
                 />
-                <p className="text-[9px] text-slate-500 mt-0.5">Sell at -{currentFile.slPct || '?'}% below buy price</p>
+                <p className="text-[9px] text-slate-500 mt-0.5">Sell at -{currentFile.slPct || 'off'}% below buy price</p>
               </div>
             </div>
             {/* Preset pills */}
@@ -340,6 +393,13 @@ export default function SetFileManager() {
                   TP{p.tp}% / SL{p.sl}%
                 </button>
               ))}
+              {(currentFile.tpPct || currentFile.slPct) && (
+                <button type="button"
+                  onClick={() => setCurrentFile({...currentFile, tpPct: null, slPct: null})}
+                  className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-500 hover:text-slate-300 text-[9px] font-mono border border-slate-800">
+                  Clear Exits
+                </button>
+              )}
             </div>
           </div>
 
@@ -524,7 +584,16 @@ export default function SetFileManager() {
 
           <div className="pt-3 border-t border-slate-800 flex justify-end gap-2">
             <button type="button" onClick={() => setIsEditing(false)} className="px-3 py-1.5 rounded bg-slate-800 text-xs hover:bg-slate-700 transition-colors">Cancel</button>
-            <button type="submit" className="px-4 py-1.5 rounded bg-cyan-600 text-white text-xs font-bold hover:bg-cyan-500 transition-colors">Save Set File</button>
+            <button
+              type="submit"
+              className={`px-4 py-1.5 rounded text-xs font-bold transition-colors ${
+                connectedWallet
+                  ? 'bg-cyan-600 text-white hover:bg-cyan-500'
+                  : 'bg-amber-600 text-white hover:bg-amber-500'
+              }`}
+            >
+              {connectedWallet ? 'Save Set File' : 'Connect Wallet to Save'}
+            </button>
           </div>
         </form>
       </div>
@@ -533,6 +602,31 @@ export default function SetFileManager() {
 
   return (
     <div className="space-y-4">
+      {/* Wallet Disconnected Banner */}
+      {!connectedWallet && (
+        <div className="p-3 rounded-lg bg-amber-950/70 border border-amber-700/60 text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
+          <div className="flex items-center gap-2">
+            <IconAlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>Wallet disconnected. Connect your Phantom or Solflare wallet to save &amp; manage set files.</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setVisible(true)}
+            className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded transition-colors shrink-0"
+          >
+            Connect Wallet
+          </button>
+        </div>
+      )}
+
+      {/* Save Success Banner */}
+      {saveSuccessMsg && (
+        <div className="p-2.5 rounded-lg bg-emerald-950/80 border border-emerald-700 text-emerald-300 text-xs font-mono flex items-center gap-2">
+          <IconCheck className="w-4 h-4 shrink-0 text-emerald-400" />
+          <span>{saveSuccessMsg}</span>
+        </div>
+      )}
+
       <div className="flex items-center justify-between pb-2 border-b border-slate-800">
         <h3 className="text-sm font-bold text-white">Bot Set Files</h3>
         <button onClick={startNew} className="px-3 py-1 text-xs font-bold bg-cyan-600/20 text-cyan-400 border border-cyan-700/50 hover:bg-cyan-600/40 rounded transition-colors">+ Create New</button>

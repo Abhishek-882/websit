@@ -24,6 +24,7 @@ export default function WalletConnector() {
 
   const [solBal, setSolBal] = useState(0);
   const debounceRef = useRef(null);
+  const prevAddressRef = useRef(null);
 
   const address = publicKey?.toBase58();
   const short = address ? `${address.slice(0, 4)}...${address.slice(-4)}` : null;
@@ -32,10 +33,15 @@ export default function WalletConnector() {
   useEffect(() => {
     setConnected(address || null);
     if (!address) {
-      setSessionBalance(0);
-      setSessionPubkey(null);
+      // Only reset session state if a previously connected wallet was explicitly disconnected
+      if (prevAddressRef.current) {
+        setSessionBalance(0);
+        setSessionPubkey(null);
+      }
+      prevAddressRef.current = null;
       return;
     }
+    prevAddressRef.current = address;
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
