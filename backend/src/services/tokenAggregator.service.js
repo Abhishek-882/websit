@@ -472,8 +472,26 @@ export class TokenAggregatorService {
         if (filters.kolMin && kol < filters.kolMin) continue;
         if (filters.devNetWorthMinUsd && devMoneyUsd < filters.devNetWorthMinUsd) continue;
 
-        // Age filter
-        if (filters.ageMaxHours > 0 && token.ageMs > filters.ageMaxHours * 3600 * 1000) continue;
+        // Age filter (Min and Max in minutes, with legacy ageMaxHours fallback)
+        const minAgeMinutes = Number(filters.ageMinMinutes || 0);
+        const maxAgeMinutes = Number(
+          filters.ageMaxMinutes !== undefined && filters.ageMaxMinutes !== null && filters.ageMaxMinutes !== ''
+            ? filters.ageMaxMinutes
+            : (filters.ageMaxHours ? Number(filters.ageMaxHours) * 60 : 0)
+        );
+
+        if (token.ageMs != null) {
+          const tokenAgeMinutes = token.ageMs / (60 * 1000);
+          if (minAgeMinutes > 0 && tokenAgeMinutes < minAgeMinutes) {
+            continue; // Token is younger than minimum required age
+          }
+          if (maxAgeMinutes > 0 && tokenAgeMinutes > maxAgeMinutes) {
+            continue; // Token is older than maximum allowed age
+          }
+        } else if (minAgeMinutes > 0 || maxAgeMinutes > 0) {
+          // If token age is unverified and an age filter is enforced, block for safety
+          continue;
+        }
 
         // Dev checks
         if (filters.devMustBeCex && !token.devFund?.isCexFunded) continue;

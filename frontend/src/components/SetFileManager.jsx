@@ -98,7 +98,9 @@ export default function SetFileManager() {
       buyFilters: {
         mcapMin: Number(currentFile.buyFilters?.mcapMin || 0),
         mcapMax: Number(currentFile.buyFilters?.mcapMax || 0),
-        ageMaxHours: Number(currentFile.buyFilters?.ageMaxHours || 0),
+        ageMinMinutes: Number(currentFile.buyFilters?.ageMinMinutes || 0),
+        ageMaxMinutes: Number(currentFile.buyFilters?.ageMaxMinutes || 0),
+        ageMaxHours: Number(currentFile.buyFilters?.ageMaxMinutes ? (currentFile.buyFilters.ageMaxMinutes / 60) : (currentFile.buyFilters?.ageMaxHours || 0)),
         smartMin: Number(currentFile.buyFilters?.smartMin || 0),
         kolMin: Number(currentFile.buyFilters?.kolMin || 0),
         devNetWorthMinUsd: Number(currentFile.buyFilters?.devNetWorthMinUsd || 0),
@@ -146,7 +148,9 @@ export default function SetFileManager() {
       buyFilters: {
         mcapMin: 10000,
         mcapMax: 250000,
-        ageMaxHours: 24,
+        ageMinMinutes: 0,
+        ageMaxMinutes: 60,
+        ageMaxHours: 1,
         smartMin: 1,
         kolMin: 0,
         devNetWorthMinUsd: 1000,
@@ -248,8 +252,94 @@ export default function SetFileManager() {
                 />
               </div>
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Max Age (Hours)</label>
-                <input type="number" value={currentFile.buyFilters?.ageMaxHours || ''} onChange={e => setCurrentFile({...currentFile, buyFilters: {...currentFile.buyFilters, ageMaxHours: parseFloat(e.target.value)}})} className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-xs text-white" placeholder="0 = any age" />
+                <label className="text-[10px] text-slate-400 block mb-1">Min Age (Minutes)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={currentFile.buyFilters?.ageMinMinutes ?? ''}
+                  onChange={e => {
+                    const mins = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value) || 0);
+                    setCurrentFile({
+                      ...currentFile,
+                      buyFilters: {
+                        ...currentFile.buyFilters,
+                        ageMinMinutes: mins,
+                      }
+                    });
+                  }}
+                  className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                  placeholder="0 = instant (0m)"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Max Age (Minutes)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={currentFile.buyFilters?.ageMaxMinutes ?? (currentFile.buyFilters?.ageMaxHours ? Math.round(currentFile.buyFilters.ageMaxHours * 60) : '')}
+                  onChange={e => {
+                    const mins = e.target.value === '' ? 0 : Math.max(0, parseInt(e.target.value) || 0);
+                    setCurrentFile({
+                      ...currentFile,
+                      buyFilters: {
+                        ...currentFile.buyFilters,
+                        ageMaxMinutes: mins,
+                        ageMaxHours: mins > 0 ? (mins / 60) : 0,
+                      }
+                    });
+                  }}
+                  className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                  placeholder="0 = any age"
+                />
+              </div>
+              <div className="col-span-2 sm:col-span-3 flex flex-wrap items-center justify-between gap-1 text-[10px] bg-slate-950/80 px-2 py-1.5 rounded border border-slate-800">
+                <span className="text-slate-400">
+                  Target Age: <strong className="text-cyan-300 font-mono">
+                    {Number(currentFile.buyFilters?.ageMinMinutes || 0)}m &ndash; {Number(currentFile.buyFilters?.ageMaxMinutes || (currentFile.buyFilters?.ageMaxHours ? currentFile.buyFilters.ageMaxHours * 60 : 0)) > 0 ? `${Number(currentFile.buyFilters?.ageMaxMinutes || (currentFile.buyFilters?.ageMaxHours * 60))}m` : 'Unlimited'}
+                  </strong>
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentFile({
+                      ...currentFile,
+                      buyFilters: { ...currentFile.buyFilters, ageMinMinutes: 0, ageMaxMinutes: 30, ageMaxHours: 0.5 }
+                    })}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[9px]"
+                  >
+                    0-30m
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentFile({
+                      ...currentFile,
+                      buyFilters: { ...currentFile.buyFilters, ageMinMinutes: 5, ageMaxMinutes: 60, ageMaxHours: 1 }
+                    })}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[9px]"
+                  >
+                    5-60m
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentFile({
+                      ...currentFile,
+                      buyFilters: { ...currentFile.buyFilters, ageMinMinutes: 15, ageMaxMinutes: 180, ageMaxHours: 3 }
+                    })}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[9px]"
+                  >
+                    15m-3h
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentFile({
+                      ...currentFile,
+                      buyFilters: { ...currentFile.buyFilters, ageMinMinutes: 0, ageMaxMinutes: 1440, ageMaxHours: 24 }
+                    })}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[9px]"
+                  >
+                    0-24h
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="text-[10px] text-slate-400 block mb-1">Min Smart Money</label>
@@ -336,6 +426,7 @@ export default function SetFileManager() {
                 <p className="text-[10px] text-slate-400 font-mono mt-1">
                   Size: <span className="text-cyan-400">{f.tradeSizeSol} SOL</span> | 
                   MCap: {f.buyFilters?.mcapMin ? (f.buyFilters.mcapMin/1000).toFixed(0)+'k' : '0'}-{f.buyFilters?.mcapMax ? (f.buyFilters.mcapMax/1000).toFixed(0)+'k' : '8'} | 
+                  Age: {f.buyFilters?.ageMinMinutes || 0}m-{f.buyFilters?.ageMaxMinutes ? `${f.buyFilters.ageMaxMinutes}m` : (f.buyFilters?.ageMaxHours ? `${Math.round(f.buyFilters.ageMaxHours * 60)}m` : 'Any')} | 
                   Smart: {f.buyFilters?.smartMin || 0}+
                 </p>
                 {f.dca?.enabled && (
@@ -350,7 +441,22 @@ export default function SetFileManager() {
                 ) : (
                   <button onClick={() => handleActivate(f)} className="px-2.5 py-1 bg-emerald-950/60 text-emerald-400 border border-emerald-800/60 hover:bg-emerald-900/60 rounded text-[10px] font-bold transition-colors">Activate</button>
                 )}
-                <button onClick={() => { setCurrentFile(f); setIsEditing(true); }} className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-bold transition-colors border border-slate-700">Edit</button>
+                <button
+                  onClick={() => {
+                    setCurrentFile({
+                      ...f,
+                      buyFilters: {
+                        ...f.buyFilters,
+                        ageMinMinutes: f.buyFilters?.ageMinMinutes || 0,
+                        ageMaxMinutes: f.buyFilters?.ageMaxMinutes ?? (f.buyFilters?.ageMaxHours ? Math.round(f.buyFilters.ageMaxHours * 60) : 0),
+                      }
+                    });
+                    setIsEditing(true);
+                  }}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-bold transition-colors border border-slate-700"
+                >
+                  Edit
+                </button>
                 <button onClick={() => handleDelete(f.id)} className="p-1 bg-rose-950/50 hover:bg-rose-900/60 text-rose-400 rounded text-[10px] border border-rose-800/50 transition-colors" title="Delete"><IconTrash className="w-3.5 h-3.5" /></button>
               </div>
             </div>

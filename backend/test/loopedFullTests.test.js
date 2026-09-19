@@ -354,10 +354,14 @@ for (let i = 0; i < 300; i++) {
   const smart = i % 10;
   const kol = (i * 2) % 10;
   const devUsd = i * 100;
+  const ageMinutes = i * 2; // 0m to 600m
+  const ageMs = ageMinutes * 60 * 1000;
   
   const buyFilters = {
     mcapMin: (i % 3 === 0) ? 20000 : 0,
     mcapMax: (i % 4 === 0) ? 500000 : 0,
+    ageMinMinutes: (i % 5 === 0) ? 10 : 0,
+    ageMaxMinutes: (i % 6 === 0) ? 120 : 0,
     smartMin: (i % 5 === 0) ? 2 : 0,
     kolMin: (i % 2 === 0) ? 1 : 0,
     devNetWorthMinUsd: (i % 6 === 0) ? 500 : 0,
@@ -366,6 +370,8 @@ for (let i = 0; i < 300; i++) {
   let expectedMatch = true;
   if (buyFilters.mcapMin > 0 && mcap < buyFilters.mcapMin) expectedMatch = false;
   if (buyFilters.mcapMax > 0 && mcap > buyFilters.mcapMax) expectedMatch = false;
+  if (buyFilters.ageMinMinutes > 0 && ageMinutes < buyFilters.ageMinMinutes) expectedMatch = false;
+  if (buyFilters.ageMaxMinutes > 0 && ageMinutes > buyFilters.ageMaxMinutes) expectedMatch = false;
   if (buyFilters.smartMin > 0 && smart < buyFilters.smartMin) expectedMatch = false;
   if (buyFilters.kolMin > 0 && kol < buyFilters.kolMin) expectedMatch = false;
   if (buyFilters.devNetWorthMinUsd > 0 && devUsd < buyFilters.devNetWorthMinUsd) expectedMatch = false;
@@ -373,6 +379,8 @@ for (let i = 0; i < 300; i++) {
   const tokenMatched = 
     (!buyFilters.mcapMin || mcap >= buyFilters.mcapMin) &&
     (!buyFilters.mcapMax || mcap <= buyFilters.mcapMax) &&
+    (!buyFilters.ageMinMinutes || ageMinutes >= buyFilters.ageMinMinutes) &&
+    (!buyFilters.ageMaxMinutes || ageMinutes <= buyFilters.ageMaxMinutes) &&
     (!buyFilters.smartMin || smart >= buyFilters.smartMin) &&
     (!buyFilters.kolMin || kol >= buyFilters.kolMin) &&
     (!buyFilters.devNetWorthMinUsd || devUsd >= buyFilters.devNetWorthMinUsd);
