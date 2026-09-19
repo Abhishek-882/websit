@@ -182,10 +182,17 @@ export class SessionWalletService {
     }
 
     if (txSignature) {
-      try {
-        await this.connection.confirmTransaction(txSignature, 'confirmed');
-      } catch (err) {
-        console.warn(`[SESSION] Confirm transaction notice for ${txSignature.slice(0, 10)}...:`, err.message);
+      for (let i = 0; i < 5; i++) {
+        try {
+          const { value } = await this.connection.getSignatureStatuses([txSignature]);
+          const status = value?.[0];
+          if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
+            break;
+          }
+        } catch (err) {
+          console.warn(`[SESSION] Signature status check notice:`, err.message);
+        }
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
 

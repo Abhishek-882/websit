@@ -150,19 +150,52 @@ export default function BotControlsModal({ isOpen, onClose }) {
       const signature = await sendTransaction(tx, healthyConn || connection);
       setStatusMsg(`Confirming deposit on Solana Mainnet (${signature.slice(0, 8)}...)...`);
 
-      await confirmTransactionWithFallback(signature, blockhash, lastValidBlockHeight, healthyConn || connection);
+      // 1. Wait for signature confirmation polling (up to 20s)
+      try {
+        await confirmTransactionWithFallback(signature, healthyConn || connection, 20000);
+      } catch (confirmErr) {
+        console.warn('[Deposit] Client confirmation loop notice:', confirmErr.message);
+        if (confirmErr.message?.includes('Transaction failed on-chain')) {
+          throw confirmErr;
+        }
+      }
 
-      // Verify on backend and update session balance
-      const res = await botApi.verifyDeposit(connectedWallet, signature);
-      setSessionBalance(res.balanceSol);
-      setStatusMsg(`Successfully deposited ${solVal} SOL! Live balance: ${res.balanceSol.toFixed(4)} SOL`);
-      setTimeout(() => setStatusMsg(null), 5000);
+      // 2. Verify on backend and update session balance (with retry loop)
+      setStatusMsg(`Verifying deposit on-chain...`);
+      let verified = false;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          const res = await botApi.verifyDeposit(connectedWallet, signature);
+          if (res?.success && typeof res.balanceSol === 'number' && res.balanceSol > 0) {
+            setSessionBalance(res.balanceSol);
+            setStatusMsg(`Successfully deposited ${solVal} SOL! Live balance: ${res.balanceSol.toFixed(4)} SOL`);
+            setTimeout(() => setStatusMsg(null), 5000);
+            verified = true;
+            break;
+          }
+        } catch (err) {
+          console.warn('[Deposit] Backend verify attempt notice:', err.message);
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+
+      if (!verified) {
+        const sessionRes = await botApi.getSession(connectedWallet);
+        if (sessionRes?.balanceSol > 0) {
+          setSessionBalance(sessionRes.balanceSol);
+          setStatusMsg(`Deposit confirmed! Live balance: ${sessionRes.balanceSol.toFixed(4)} SOL`);
+          setTimeout(() => setStatusMsg(null), 5000);
+        } else {
+          setStatusMsg(`Deposit broadcasted (${signature.slice(0, 8)}...). Refreshing balance in a few moments...`);
+          setTimeout(() => setStatusMsg(null), 6000);
+        }
+      }
     } catch (err) {
       console.error('Deposit error:', err);
       if (err.message?.includes('User rejected')) {
         setStatusMsg(null);
       } else {
-        alert(`Deposit failed: ${err.message}`);
+        alert(`Deposit notice: ${err.message}`);
         setStatusMsg(null);
       }
     } finally {

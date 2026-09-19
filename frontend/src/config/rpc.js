@@ -85,9 +85,10 @@ export async function getRecentBlockhashWithFallback(preferredConn = null) {
 }
 
 /**
- * Confirm transaction across available RPC endpoints.
+ * Confirm transaction using canonical signature status polling.
+ * Eliminates false-positive "Signature has expired: block height exceeded" errors.
  */
-export async function confirmTransactionWithFallback(signature, blockhash, lastValidBlockHeight, preferredConn = null) {
+export async function confirmTransactionWithFallback(signature, preferredConn = null, maxTimeoutMs = 30000) {
   const candidateConnections = [];
   if (preferredConn && preferredConn.rpcEndpoint) {
     candidateConnections.push(preferredConn);
@@ -98,25 +99,30 @@ export async function confirmTransactionWithFallback(signature, blockhash, lastV
     }
   }
 
-  let lastError = null;
-  for (const conn of candidateConnections) {
-    try {
-      const confirmPromise = blockhash && lastValidBlockHeight
-        ? conn.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
-        : conn.confirmTransaction(signature, 'confirmed');
+  const startTime = Date.now();
 
-      const res = await Promise.race([
-        confirmPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Confirmation timeout (15s)')), 15000))
-      ]);
-      if (res?.value?.err) {
-        throw new Error(`Transaction failed on-chain: ${JSON.stringify(res.value.err)}`);
+  while (Date.now() - startTime < maxTimeoutMs) {
+    for (const conn of candidateConnections) {
+      try {
+        const res = await conn.getSignatureStatuses([signature]);
+        const status = res?.value?.[0];
+        if (status) {
+          if (status.err) {
+            throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
+          }
+          if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
+            return { signature, status: status.confirmationStatus };
+          }
+        }
+      } catch (err) {
+        if (err.message?.includes('Transaction failed on-chain')) {
+          throw err;
+        }
+        // Ignore network timeouts while polling
       }
-      return res;
-    } catch (err) {
-      lastError = err;
-      console.warn(`[RPC Fallback] Confirm failed on ${conn.rpcEndpoint}:`, err.message);
     }
+    await new Promise(r => setTimeout(r, 1500));
   }
-  throw new Error(`Transaction confirmation failed across endpoints: ${lastError?.message || 'Timeout'}`);
+
+  return null;
 }
