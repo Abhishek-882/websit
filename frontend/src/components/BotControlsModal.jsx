@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { Transaction, SystemProgram, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { Transaction, SystemProgram, PublicKey, LAMPORTS_PER_SOL, ComputeBudgetProgram } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
@@ -26,6 +26,7 @@ import {
 const DEPOSIT_PRESETS = [0.01, 0.05, 0.1, 0.2, 0.5, 1.0];
 
 import SetFileManager from './SetFileManager';
+import { getRecentBlockhashWithFallback, confirmTransactionWithFallback } from '../config/rpc.js';
 
 export default function BotControlsModal({ isOpen, onClose }) {
   const { publicKey, sendTransaction, signMessage } = useWallet();
@@ -46,6 +47,9 @@ export default function BotControlsModal({ isOpen, onClose }) {
 
   // Tab state: 'setFiles' (primary strategy profiles) | 'session' (delegated wallet & funding)
   const [activeTab, setActiveTab] = useState('setFiles');
+
+  // Execution Engine state: 'jupiter' (Active / Live) | 'phantom_agent' (Under Development)
+  const [executionEngine, setExecutionEngine] = useState('jupiter');
 
   // 1-Click Deposit state
   const [depositAmount, setDepositAmount] = useState(0.1);
@@ -129,6 +133,8 @@ export default function BotControlsModal({ isOpen, onClose }) {
     try {
       const lamports = Math.round(solVal * LAMPORTS_PER_SOL);
       const tx = new Transaction().add(
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 50_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 }),
         SystemProgram.transfer({
           fromPubkey: publicKey,
           toPubkey: new PublicKey(sessionPubkey),
@@ -136,10 +142,15 @@ export default function BotControlsModal({ isOpen, onClose }) {
         })
       );
 
-      const signature = await sendTransaction(tx, connection);
+      // Pre-populate feePayer and recentBlockhash with multi-RPC fallback
+      tx.feePayer = publicKey;
+      const { blockhash, lastValidBlockHeight, connection: healthyConn } = await getRecentBlockhashWithFallback(connection);
+      tx.recentBlockhash = blockhash;
+
+      const signature = await sendTransaction(tx, healthyConn || connection);
       setStatusMsg(`Confirming deposit on Solana Mainnet (${signature.slice(0, 8)}...)...`);
 
-      await connection.confirmTransaction(signature, 'confirmed');
+      await confirmTransactionWithFallback(signature, blockhash, lastValidBlockHeight, healthyConn || connection);
 
       // Verify on backend and update session balance
       const res = await botApi.verifyDeposit(connectedWallet, signature);
@@ -328,6 +339,78 @@ export default function BotControlsModal({ isOpen, onClose }) {
             <span>{statusMsg}</span>
           </div>
         )}
+
+        {/* Execution Engine Selector (Jupiter vs Full Phantom Agent) */}
+        <div className="mb-3.5 p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+              <IconBolt className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Execution Engine</span>
+            </span>
+            <span className="text-[10px] text-slate-400 font-mono">
+              Choose automated trading backend
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {/* Option 1: Jupiter Limit Engine */}
+            <button
+              type="button"
+              onClick={() => setExecutionEngine('jupiter')}
+              className={`p-2.5 rounded-lg border text-left transition-all relative ${
+                executionEngine === 'jupiter'
+                  ? 'bg-cyan-950/40 border-cyan-500/80 text-white ring-1 ring-cyan-500/40 shadow-sm shadow-cyan-950/50'
+                  : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-bold text-cyan-300 flex items-center gap-1">
+                  <IconBolt className="w-3 h-3 text-cyan-400" />
+                  <span>Jupiter Limit Engine</span>
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold">
+                  Active / Live
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                Sub-second delegated session keypair with on-chain Jupiter v2 limit order exits (zero API delay).
+              </p>
+            </button>
+
+            {/* Option 2: Full Phantom Agent (KMS) */}
+            <button
+              type="button"
+              onClick={() => setExecutionEngine('phantom_agent')}
+              className={`p-2.5 rounded-lg border text-left transition-all relative ${
+                executionEngine === 'phantom_agent'
+                  ? 'bg-purple-950/40 border-purple-500/80 text-white ring-1 ring-purple-500/40 shadow-sm shadow-purple-950/50'
+                  : 'bg-slate-950/50 border-slate-800 text-slate-400 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-bold text-purple-300 flex items-center gap-1">
+                  <IconShield className="w-3 h-3 text-purple-400" />
+                  <span>Full Phantom Agent</span>
+                </span>
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-amber-950/90 text-amber-300 border border-amber-800/80 font-semibold animate-pulse">
+                  Under Development
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                Official Phantom MCP / CLI agent wallet. TEE/HSM KMS security, 0% platform swap fees &amp; Hyperliquid perps.
+              </p>
+            </button>
+          </div>
+
+          {executionEngine === 'phantom_agent' && (
+            <div className="p-2 rounded bg-amber-950/30 border border-amber-800/50 text-amber-300 text-[11px] font-mono flex items-center gap-2">
+              <IconAlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>
+                <strong>Under Development:</strong> Official Phantom MCP Server / CLI integration is currently in progress. Active trades and session orders continue running on the high-speed Jupiter Limit Engine.
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* Tab Navigation */}
         <div className="flex items-center gap-2 mb-4 border-b border-slate-800 pb-2">

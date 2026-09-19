@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { VersionedTransaction } from '@solana/web3.js';
+import { jupiterPriceService } from './jupiterPrice.service.js';
 
 const JUPITER_LIMIT_ORDER_API = 'https://api.jup.ag/limit/v2';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -31,11 +32,12 @@ export class JupiterLimitOrderService {
    * @param {string} params.tokenMint - Token mint address (what was bought)
    * @param {number} params.tokenAmountRaw - Raw token amount bought (lamports/smallest unit)
    * @param {number} params.buyPriceUsd - USD price at time of buy
+   * @param {number} params.amountSol - SOL amount spent on buy (for direct authentic SOL taking amount)
    * @param {number} params.tpPct - Take profit percentage (e.g. 50 = +50%)
    * @param {number} params.slPct - Stop loss percentage (e.g. 20 = -20%)
    * @param {number} params.tokenDecimals - Token decimals (default 6 for most Solana meme coins)
    */
-  async placeExitOrders({ connection, keypair, tokenMint, tokenAmountRaw, buyPriceUsd, tpPct, slPct, tokenDecimals = 6 }) {
+  async placeExitOrders({ connection, keypair, tokenMint, tokenAmountRaw, buyPriceUsd, amountSol = null, tpPct, slPct, tokenDecimals = 6 }) {
     const results = { tp: null, sl: null, errors: [] };
 
     if (!tpPct && !slPct) return results;
@@ -44,11 +46,6 @@ export class JupiterLimitOrderService {
     const sessionPubkey = keypair.publicKey.toBase58();
 
     // Calculate target prices in terms of SOL received per token
-    // Since we're selling token → SOL, we need: how much SOL to receive
-    // solPriceUsd is approximated from current SOL price (~145 USD)
-    // makingAmount = tokenAmountRaw (tokens to sell)
-    // takingAmount = SOL to receive = tokenAmount × targetPriceUsd / solPriceUsd
-
     // We use a 24-hour expiry (86400 seconds from now)
     const expiredAt = Math.floor(Date.now() / 1000) + 86400;
 
@@ -61,6 +58,7 @@ export class JupiterLimitOrderService {
           sessionPubkey,
           tokenMint,
           tokenAmountRaw,
+          amountSol,
           tpPct,
           slPct: null,
           buyPriceUsd,
@@ -85,6 +83,7 @@ export class JupiterLimitOrderService {
           sessionPubkey,
           tokenMint,
           tokenAmountRaw,
+          amountSol,
           tpPct: null,
           slPct,
           buyPriceUsd,
@@ -106,26 +105,27 @@ export class JupiterLimitOrderService {
   /**
    * Internal: build, sign, and submit one limit order.
    */
-  async _placeOrder({ connection, keypair, sessionPubkey, tokenMint, tokenAmountRaw, tpPct, slPct, buyPriceUsd, tokenDecimals, expiredAt, orderLabel }) {
-    // Calculate target price
-    let targetPriceFactor;
-    if (orderLabel === 'TP') {
-      targetPriceFactor = 1 + (tpPct / 100);
-    } else {
-      targetPriceFactor = 1 - (slPct / 100);
-    }
+  async _placeOrder({ connection, keypair, sessionPubkey, tokenMint, tokenAmountRaw, amountSol, tpPct, slPct, buyPriceUsd, tokenDecimals, expiredAt, orderLabel }) {
+    // Calculate target price factor
+    const targetPriceFactor = orderLabel === 'TP' ? (1 + (tpPct / 100)) : (1 - (slPct / 100));
+    const targetPriceUsd = buyPriceUsd ? buyPriceUsd * targetPriceFactor : null;
 
-    const targetPriceUsd = buyPriceUsd * targetPriceFactor;
-
-    // Convert to token→SOL rate
-    // We're selling `tokenAmountRaw` of the token and want `solToReceive` SOL back
-    // takingAmount is in SOL lamports
+    // Convert to token→SOL rate:
+    // We're selling `tokenAmountRaw` of the token and want SOL back.
+    // takingAmount is in SOL lamports.
     const LAMPORTS_PER_SOL = 1_000_000_000;
-    const solPriceUsd = 145; // Conservative estimate; close enough for limit pricing
-    const tokenAmountUi = tokenAmountRaw / Math.pow(10, tokenDecimals);
-    const totalValueUsd = tokenAmountUi * targetPriceUsd;
-    const solToReceive = totalValueUsd / solPriceUsd;
-    const solLamports = Math.floor(solToReceive * LAMPORTS_PER_SOL);
+    let solLamports;
+
+    if (amountSol && amountSol > 0) {
+      // Direct authentic SOL-denominated math: amountSol * targetPriceFactor
+      solLamports = Math.floor(amountSol * targetPriceFactor * LAMPORTS_PER_SOL);
+    } else {
+      // Dynamic fallback via live SOL price from jupiterPriceService
+      const liveSolPrice = jupiterPriceService.getPrice(SOL_MINT)?.usdPrice || 140;
+      const tokenAmountUi = tokenAmountRaw / Math.pow(10, tokenDecimals);
+      const totalValueUsd = tokenAmountUi * (targetPriceUsd || 0);
+      solLamports = Math.floor((totalValueUsd / liveSolPrice) * LAMPORTS_PER_SOL);
+    }
 
     if (solLamports <= 0) {
       throw new Error(`Invalid taking amount for ${orderLabel}: ${solLamports} lamports`);

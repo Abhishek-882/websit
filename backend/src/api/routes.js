@@ -6,6 +6,7 @@ import { tradingService } from '../services/trading.service.js';
 import { jupiterPriceService } from '../services/jupiterPrice.service.js';
 import { getBotConfig, updateBotConfig, getTrades, saveSetFile, getSetFiles, getSetFile, deleteSetFile, getActiveSetFile, setActiveSetFile } from '../db/database.js';
 import { sendOtp, verifyOtp, verifyToken, setPinForUser, verifyPinAndIssueToken, hasPinSet } from '../services/auth.service.js';
+import { rpcProxyService } from '../services/rpcProxy.service.js';
 
 const router = Router();
 
@@ -237,6 +238,51 @@ router.post('/bot/withdraw', async (req, res) => {
   }
 });
 
+// ── RPC Gateway Endpoints ─────────────────────────────────────────
+
+/**
+ * GET /api/rpc/blockhash
+ * Cached recent blockhash (<15ms, 0 CORS risk)
+ */
+router.get('/rpc/blockhash', async (req, res) => {
+  try {
+    const data = await rpcProxyService.getLatestBlockhash();
+    res.json({ success: true, ...data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/rpc/balance/:address
+ * Cached wallet balance (<15ms, 0 CORS risk)
+ */
+router.get('/rpc/balance/:address', async (req, res) => {
+  try {
+    const data = await rpcProxyService.getBalance(req.params.address);
+    res.json({ success: true, ...data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/rpc
+ * Whitelisted JSON-RPC proxy for browser clients
+ */
+router.post('/rpc', async (req, res) => {
+  try {
+    const data = await rpcProxyService.forwardJsonRpc(req.body);
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({
+      jsonrpc: '2.0',
+      id: req.body?.id || null,
+      error: { code: -32600, message: err.message }
+    });
+  }
+});
+
 /**
  * GET /api/bot/config/:wallet
  */
@@ -350,6 +396,10 @@ router.post('/bot/manual-buy', async (req, res) => {
       return res.status(400).json({ error: 'Token not fully enriched' });
     }
 
+    const activeSet = await getActiveSetFile(userWallet);
+    const tpPct = req.body.tpPct ?? activeSet?.tradeConfig?.tpPct ?? activeSet?.tpPct ?? null;
+    const slPct = req.body.slPct ?? activeSet?.tradeConfig?.slPct ?? activeSet?.slPct ?? null;
+
     const result = await tradingService.autoBuy({
       userWallet,
       tokenAddress,
@@ -357,6 +407,8 @@ router.post('/bot/manual-buy', async (req, res) => {
       coinSymbol,
       amountSol: Number(amountSol || 0.1),
       slippageBps: Number(slippageBps || 500),
+      tpPct,
+      slPct,
     });
     res.json(result);
   } catch (err) {

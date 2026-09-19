@@ -211,6 +211,8 @@ export class TokenAggregatorService {
               slippageBps: order.slippageBps,
               useJito: order.useJito,
               feeSpeed: order.feeSpeed || 'fast',
+              tpPct: order.tpPct,
+              slPct: order.slPct,
             });
             await fillLimitOrder(order.id, { filled_price_usd: livePrice });
           } catch (buyErr) {
@@ -750,7 +752,7 @@ export class TokenAggregatorService {
         }
 
         if (token.priceUsd <= order.targetPriceUsd) {
-          console.log(`[BOT] 🎯 Fibonacci Retracement Hit for $${order.coinSymbol}! Target: $${order.targetPriceUsd.toFixed(6)}, Live: $${token.priceUsd.toFixed(6)}. Executing Limit Buy!`);
+          console.log(`[BOT] Fibonacci Retracement Hit for $${order.coinSymbol}! Target: $${order.targetPriceUsd.toFixed(6)}, Live: $${token.priceUsd.toFixed(6)}. Executing Limit Buy!`);
           try {
             await tradingService.autoBuy({
               userWallet: order.userWallet,
@@ -760,6 +762,8 @@ export class TokenAggregatorService {
               amountSol: order.amountSol,
               slippageBps: order.slippageBps,
               useJito: order.useJito,
+              tpPct: order.tpPct,
+              slPct: order.slPct,
             });
             await fillLimitOrder(order.id, { filled_price_usd: token.priceUsd });
           } catch (buyErr) {

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { Connection, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { recordTrade, hasBought, updateTradeTP, getTrades, closeTrade, getBotConfig } from '../db/database.js';
+import { recordTrade, hasBought, updateTradeTP, getTrades, closeTrade, getBotConfig, getActiveSetFile } from '../db/database.js';
 import { sessionWalletService } from './sessionWallet.service.js';
 import { tradeExecutionService } from './tradeExecution.service.js';
 import { jupiterPriceService } from './jupiterPrice.service.js';
@@ -23,6 +23,17 @@ export class TradingService {
   async autoBuy({ userWallet, tokenAddress, coinName, coinSymbol, amountSol, slippageBps = 500, useJito = true, feeSpeed = 'fast', tpPct = null, slPct = null }) {
     if (!userWallet || !tokenAddress) {
       throw new Error('Missing userWallet or tokenAddress');
+    }
+
+    // Resolve TP/SL from active Set File if not explicitly provided
+    if (tpPct == null && slPct == null) {
+      try {
+        const activeSet = await getActiveSetFile(userWallet);
+        tpPct = activeSet?.tradeConfig?.tpPct ?? activeSet?.tpPct ?? null;
+        slPct = activeSet?.tradeConfig?.slPct ?? activeSet?.slPct ?? null;
+      } catch (err) {
+        console.warn('[AutoBuy] Could not load activeSet for tp/sl:', err.message);
+      }
     }
 
     // 1. Anti-Duplicate Guard
@@ -122,6 +133,7 @@ export class TradingService {
         tokenMint: tokenAddress,
         tokenAmountRaw: outAmount,
         buyPriceUsd,
+        amountSol,
         tpPct,
         slPct,
       }).then(result => {

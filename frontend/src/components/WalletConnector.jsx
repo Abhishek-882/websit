@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { Connection, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
 import { IconClose } from './Icons';
-import { RPC_ENDPOINTS } from '../config/rpc.js';
+import { RPC_ENDPOINTS, PUBLIC_NODE_RPC, PUBLIC_NODE_ALT } from '../config/rpc.js';
 
 export default function WalletConnector() {
   const { setVisible } = useWalletModal();
@@ -22,7 +22,8 @@ export default function WalletConnector() {
   const setSetFiles = useBotStore(s => s.setSetFiles);
   const setActiveSetFile = useBotStore(s => s.setActiveSetFile);
 
-  const [solBal, setSolBal] = useState(0);
+  const [solBal, setSolBal] = useState(null); // null = unverified/loading
+  const [balLoading, setBalLoading] = useState(false);
   const debounceRef = useRef(null);
   const prevAddressRef = useRef(null);
 
@@ -98,20 +99,46 @@ export default function WalletConnector() {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [address]);
 
-  // Fetch main wallet SOL balance with RPC failover
+  // Fetch main wallet SOL balance with two-tier failover
   const fetchBalWithFallback = useCallback(async (pubkey) => {
-    const endpoints = RPC_ENDPOINTS || [connection?.rpcEndpoint];
-    for (const ep of endpoints) {
+    if (!pubkey) return;
+    const addr = pubkey.toBase58 ? pubkey.toBase58() : String(pubkey);
+    setBalLoading(true);
+
+    // Tier 1: Same-Origin Backend Gateway (/api/rpc/balance/:address, <15ms, 0 CORS risk)
+    try {
+      const res = await fetch(`/api/rpc/balance/${addr}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && typeof data.balanceSol === 'number') {
+          setSolBal(data.balanceSol);
+          setBalLoading(false);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[Balance] Backend gateway balance unavailable, falling back to client RPC pool:', err.message);
+    }
+
+    // Tier 2: Direct Client PublicNode RPCs
+    const clientEndpoints = [PUBLIC_NODE_RPC, PUBLIC_NODE_ALT];
+    for (const ep of clientEndpoints) {
       try {
-        const conn = ep === connection?.rpcEndpoint ? connection : new Connection(ep, 'confirmed');
-        const b = await conn.getBalance(pubkey);
-        setSolBal(b / LAMPORTS_PER_SOL);
-        return; // success — stop trying
-      } catch {
-        // try next endpoint
+        const conn = new Connection(ep, 'confirmed');
+        const lamports = await Promise.race([
+          conn.getBalance(new PublicKey(addr)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('RPC timeout (5s)')), 5000)),
+        ]);
+        setSolBal(lamports / LAMPORTS_PER_SOL);
+        setBalLoading(false);
+        return;
+      } catch (err) {
+        console.warn(`[Balance] Public node ${ep} failed:`, err.message);
       }
     }
-  }, [connection]);
+
+    setBalLoading(false);
+  }, []);
 
   // Fetch balance on connect, poll every 30s (reduced from 15s — saves mobile data/battery)
   useEffect(() => {
@@ -241,7 +268,9 @@ export default function WalletConnector() {
         />
         <div className="flex flex-col leading-tight font-mono">
           <span className="text-white font-semibold">{short}</span>
-          <span className="text-[10px] text-slate-400">{solBal.toFixed(3)} SOL</span>
+          <span className="text-[10px] text-slate-400">
+            {solBal !== null ? `${solBal.toFixed(3)} SOL` : (balLoading ? '... SOL' : '-- SOL')}
+          </span>
         </div>
         <button
           onClick={disconnect}
