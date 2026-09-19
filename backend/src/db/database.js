@@ -30,8 +30,15 @@ function ensureLocalFile() {
       if (!Array.isArray(localDb.trades)) localDb.trades = [];
       if (!Array.isArray(localDb.limit_orders)) localDb.limit_orders = [];
       if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
+      if (!Array.isArray(localDb.session_wallets_backup)) localDb.session_wallets_backup = [];
       if (!localDb.bot_configs) localDb.bot_configs = {};
       if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
+      // Auto-migrate any legacy set files missing a unique id
+      localDb.set_files.forEach((sf, idx) => {
+        if (!sf.id) {
+          sf.id = `set_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`;
+        }
+      });
       if (!Array.isArray(localDb.bought_tokens)) localDb.bought_tokens = [];
       if (!Array.isArray(localDb.users)) localDb.users = [];
       if (!Array.isArray(localDb.auth_otps)) localDb.auth_otps = [];
@@ -172,8 +179,13 @@ export async function cancelLimitOrder(orderId) {
 
 export async function saveSessionWallet({ userWallet, sessionPubkey, encryptedPrivkey, botConfig }) {
   ensureLocalFile();
+  if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
+  if (!Array.isArray(localDb.session_wallets_backup)) localDb.session_wallets_backup = [];
+
   const existingIdx = localDb.session_wallets.findIndex(s => s.user_wallet === userWallet);
-  const now = new Date().toISOString();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours active window
+
   const sessionData = {
     id: existingIdx >= 0 ? localDb.session_wallets[existingIdx].id : localDb.session_wallets.length + 1,
     user_wallet: userWallet,
@@ -181,8 +193,9 @@ export async function saveSessionWallet({ userWallet, sessionPubkey, encryptedPr
     encrypted_privkey: encryptedPrivkey,
     is_active: true,
     bot_config: botConfig || {},
-    created_at: existingIdx >= 0 ? localDb.session_wallets[existingIdx].created_at : now,
-    updated_at: now,
+    created_at: existingIdx >= 0 ? localDb.session_wallets[existingIdx].created_at : now.toISOString(),
+    updated_at: now.toISOString(),
+    expires_at: expiresAt,
   };
 
   if (existingIdx >= 0) {
@@ -190,17 +203,56 @@ export async function saveSessionWallet({ userWallet, sessionPubkey, encryptedPr
   } else {
     localDb.session_wallets.push(sessionData);
   }
+
+  // Backup vault: ensure this session's encrypted private key is permanently recorded
+  const backupIdx = localDb.session_wallets_backup.findIndex(b => b.session_pubkey === sessionPubkey);
+  if (backupIdx >= 0) {
+    localDb.session_wallets_backup[backupIdx] = {
+      ...localDb.session_wallets_backup[backupIdx],
+      user_wallet: userWallet,
+      encrypted_privkey: encryptedPrivkey,
+      updated_at: now.toISOString(),
+    };
+  } else {
+    localDb.session_wallets_backup.push({
+      user_wallet: userWallet,
+      session_pubkey: sessionPubkey,
+      encrypted_privkey: encryptedPrivkey,
+      created_at: now.toISOString(),
+      status: 'active',
+    });
+  }
+
   saveLocalFile();
+  return sessionData;
 }
 
 export async function getSessionWallet(userWallet) {
   ensureLocalFile();
-  return localDb.session_wallets.find(s => s.user_wallet === userWallet && s.is_active) || null;
+  if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
+  const session = localDb.session_wallets.find(s => s.user_wallet === userWallet && s.is_active);
+  if (!session) return null;
+
+  // Refresh 24-hour active window so it never expires while user or background bot is running
+  const now = new Date();
+  session.updated_at = now.toISOString();
+  session.expires_at = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  saveLocalFile();
+  return session;
 }
 
 export async function getAllActiveSessions() {
   ensureLocalFile();
-  return localDb.session_wallets.filter(s => s.is_active);
+  if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
+  const now = new Date();
+  return localDb.session_wallets.filter(s => {
+    if (!s.is_active) return false;
+    if (s.expires_at) {
+      return new Date(s.expires_at) > now;
+    }
+    const baseTime = new Date(s.updated_at || s.created_at || 0).getTime();
+    return (now.getTime() - baseTime) < 24 * 60 * 60 * 1000;
+  });
 }
 
 export async function updateBotConfig(userWallet, botConfig) {
@@ -222,12 +274,46 @@ export async function getBotConfig(userWallet) {
 
 export async function deactivateSession(userWallet) {
   ensureLocalFile();
-  const session = localDb.session_wallets.find(s => s.user_wallet === userWallet);
-  if (session) {
-    session.is_active = false;
-    session.updated_at = new Date().toISOString();
-    saveLocalFile();
+  if (Array.isArray(localDb.session_wallets)) {
+    const session = localDb.session_wallets.find(s => s.user_wallet === userWallet);
+    if (session) {
+      session.is_active = false;
+      session.updated_at = new Date().toISOString();
+    }
   }
+  saveLocalFile();
+}
+
+export async function archiveSessionWallet({ userWallet, sessionPubkey, encryptedPrivkey, refundTx, refundedSol, archivedAt, reason }) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.session_wallets_backup)) localDb.session_wallets_backup = [];
+
+  localDb.session_wallets_backup.push({
+    user_wallet: userWallet,
+    session_pubkey: sessionPubkey,
+    encrypted_privkey: encryptedPrivkey,
+    refund_tx: refundTx || null,
+    refunded_sol: refundedSol || 0,
+    archived_at: archivedAt || new Date().toISOString(),
+    reason: reason || 'deleted',
+    status: 'archived',
+  });
+
+  // Remove from active session wallets so clean recreation can happen immediately
+  if (Array.isArray(localDb.session_wallets)) {
+    const idx = localDb.session_wallets.findIndex(s => s.user_wallet === userWallet);
+    if (idx >= 0) {
+      localDb.session_wallets.splice(idx, 1);
+    }
+  }
+
+  saveLocalFile();
+}
+
+export async function getArchivedSessions(userWallet) {
+  ensureLocalFile();
+  if (!Array.isArray(localDb.session_wallets_backup)) return [];
+  return localDb.session_wallets_backup.filter(s => s.user_wallet === userWallet);
 }
 
 // ── Set File helpers ───────────────────────────────────────────────
@@ -235,12 +321,17 @@ export async function deactivateSession(userWallet) {
 export async function saveSetFile(userWallet, setFile) {
   ensureLocalFile();
   if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
-  
-  const existingIdx = localDb.set_files.findIndex(s => s.id === setFile.id && s.userWallet === userWallet);
+
+  // Guarantee every set file has an immutable, unique ID
+  if (!setFile.id) {
+    setFile.id = `set_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  const existingIdx = localDb.set_files.findIndex(s => String(s.id) === String(setFile.id) && s.userWallet === userWallet);
   const now = new Date().toISOString();
-  
+
   if (existingIdx >= 0) {
-    localDb.set_files[existingIdx] = { ...localDb.set_files[existingIdx], ...setFile, updatedAt: now };
+    localDb.set_files[existingIdx] = { ...localDb.set_files[existingIdx], ...setFile, userWallet, updatedAt: now };
   } else {
     localDb.set_files.push({ ...setFile, userWallet, createdAt: now, updatedAt: now });
   }
@@ -257,13 +348,13 @@ export async function getSetFiles(userWallet) {
 export async function getSetFile(userWallet, setFileId) {
   ensureLocalFile();
   if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
-  return localDb.set_files.find(s => s.id === setFileId && s.userWallet === userWallet) || null;
+  return localDb.set_files.find(s => String(s.id) === String(setFileId) && s.userWallet === userWallet) || null;
 }
 
 export async function deleteSetFile(userWallet, setFileId) {
   ensureLocalFile();
   if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
-  const idx = localDb.set_files.findIndex(s => s.id === setFileId && s.userWallet === userWallet);
+  const idx = localDb.set_files.findIndex(s => String(s.id) === String(setFileId) && s.userWallet === userWallet);
   if (idx >= 0) {
     localDb.set_files.splice(idx, 1);
     saveLocalFile();
@@ -284,7 +375,7 @@ export async function setActiveSetFile(userWallet, setFileId) {
   let activated = null;
   for (const s of localDb.set_files) {
     if (s.userWallet === userWallet) {
-      if (s.id === setFileId) {
+      if (setFileId && String(s.id) === String(setFileId)) {
         s.isActive = true;
         activated = s;
       } else {

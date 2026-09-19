@@ -156,16 +156,47 @@ router.get('/bot/session/:wallet', async (req, res) => {
 });
 
 /**
+ * POST /api/bot/session/delete
+ * Safely deletes a session wallet:
+ * - Sweeps 100% remaining SOL balance back to user's connected wallet
+ * - Permanently preserves private key in backup vault
+ * - Clears session so user can create fresh new one
+ */
+router.post('/bot/session/delete', async (req, res) => {
+  try {
+    const { userWallet } = req.body;
+    if (!userWallet) return res.status(400).json({ error: 'Missing userWallet' });
+    const result = await sessionWalletService.deleteAndRefundSession(userWallet);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/bot/session/backups/:wallet
+ * Get list of archived session keys and refund histories.
+ */
+router.get('/bot/session/backups/:wallet', async (req, res) => {
+  try {
+    const backups = await sessionWalletService.getBackups(req.params.wallet);
+    res.json({ success: true, backups: backups || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * POST /api/bot/export-key
  * Secure export of session private key requiring Phantom signature proof-of-ownership.
  */
 router.post('/bot/export-key', async (req, res) => {
   try {
-    const { userWallet, signature, message } = req.body;
+    const { userWallet, signature, message, sessionPubkey } = req.body;
     if (!userWallet || !signature || !message) {
       return res.status(400).json({ error: 'Missing userWallet, signature, or message' });
     }
-    const result = await sessionWalletService.exportPrivateKey(userWallet, signature, message);
+    const result = await sessionWalletService.exportPrivateKey(userWallet, signature, message, sessionPubkey);
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
@@ -338,8 +369,12 @@ router.delete('/bot/set-file', async (req, res) => {
 router.post('/bot/set-file/activate', async (req, res) => {
   try {
     const { userWallet, id } = req.body;
-    if (!userWallet || !id) return res.status(400).json({ error: 'Missing userWallet or id' });
+    if (!userWallet) return res.status(400).json({ error: 'Missing userWallet' });
+    if (!id) return res.status(400).json({ error: 'Missing set file id to activate' });
     const activated = await setActiveSetFile(userWallet, id);
+    if (!activated) {
+      return res.status(404).json({ error: `Set file not found for this wallet` });
+    }
     res.json({ success: true, activeSetFile: activated });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

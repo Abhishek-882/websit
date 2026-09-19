@@ -543,6 +543,78 @@ await runTest('Trading Service enforces 0.005 SOL gas reserve before trades', ()
 });
 
 // ─────────────────────────────────────────────────────────────
+// 13. Safe Session Deletion & Backup Vault Archival
+// ─────────────────────────────────────────────────────────────
+await runTest('Deleting a session archives private key in permanent backup vault and allows new session creation', async () => {
+  const { sessionWalletService } = await import('../src/services/sessionWallet.service.js');
+  const { Keypair } = await import('@solana/web3.js');
+
+  const userKp = Keypair.generate();
+  const userWallet = userKp.publicKey.toBase58();
+
+  // Create initial session
+  const initialSession = await sessionWalletService.createSession(userWallet);
+  const initialPubkey = initialSession.sessionPubkey;
+  assert.ok(initialPubkey);
+
+  // Safely delete and reset session (simulating zero or refunded balance)
+  const delResult = await sessionWalletService.deleteAndRefundSession(userWallet);
+  assert.equal(delResult.success, true);
+  assert.equal(delResult.sessionPubkey, initialPubkey);
+
+  // Active session should now be null
+  const activeAfterDel = await sessionWalletService.getSession(userWallet);
+  assert.equal(activeAfterDel, null, 'Active session must be cleared after deletion');
+
+  // Verify key is in backup vault
+  const backups = await sessionWalletService.getBackups(userWallet);
+  assert.ok(backups.length >= 1, 'Backup vault must contain archived session');
+  const backupEntry = backups.find(b => b.session_pubkey === initialPubkey);
+  assert.ok(backupEntry, 'Archived session pubkey must be in backup vault');
+
+  // User should be able to immediately create a brand new session with distinct pubkey
+  const newSession = await sessionWalletService.createSession(userWallet);
+  assert.ok(newSession.sessionPubkey);
+  assert.notEqual(newSession.sessionPubkey, initialPubkey, 'New session must have a fresh distinct address');
+});
+
+// ─────────────────────────────────────────────────────────────
+// 14. Exporting Archived Keys from Backup Vault
+// ─────────────────────────────────────────────────────────────
+await runTest('Archived session keys can be exported from backup vault with signature authentication', async () => {
+  const { sessionWalletService } = await import('../src/services/sessionWallet.service.js');
+  const { Keypair } = await import('@solana/web3.js');
+  const crypto = await import('crypto');
+  const bs58 = (await import('bs58')).default;
+
+  const userKp = Keypair.generate();
+  const userWallet = userKp.publicKey.toBase58();
+
+  // Create session and delete it into backup vault
+  const session = await sessionWalletService.createSession(userWallet);
+  const oldPubkey = session.sessionPubkey;
+  await sessionWalletService.deleteAndRefundSession(userWallet);
+
+  // Sign authorization message with connected Phantom keypair using Node crypto
+  const message = `Authorize private key export for MEME_CAT Session (${oldPubkey}) at timestamp ${Date.now()}`;
+  const messageBytes = Buffer.from(message, 'utf8');
+  const seed = userKp.secretKey.subarray(0, 32);
+  const pkcs8Prefix = Buffer.from('302e020100300506032b657004220420', 'hex');
+  const privKeyObj = crypto.createPrivateKey({
+    key: Buffer.concat([pkcs8Prefix, seed]),
+    format: 'der',
+    type: 'pkcs8',
+  });
+  const validSig = crypto.sign(null, messageBytes, privKeyObj);
+  const validSigB58 = bs58.encode(validSig);
+
+  // Export the archived key by specifying oldPubkey
+  const exported = await sessionWalletService.exportPrivateKey(userWallet, validSigB58, message, oldPubkey);
+  assert.equal(exported.sessionPubkey, oldPubkey, 'Exported pubkey must match archived session');
+  assert.ok(exported.privateKey, 'Must recover decrypted private key from backup vault');
+});
+
+// ─────────────────────────────────────────────────────────────
 // Summary
 // ─────────────────────────────────────────────────────────────
 console.log(`\n==================================================`);

@@ -15,10 +15,15 @@ export default function SetFileManager() {
   const [nameError, setNameError] = useState(null);
 
   const handleActivate = async (file) => {
-    if (!connectedWallet) return;
+    if (!connectedWallet || !file) return;
+    const fileId = file.id || file._id;
+    if (!fileId) {
+      alert('This set file has no ID. Please edit and save it once to assign an ID.');
+      return;
+    }
     try {
-      await botApi.activateSetFile(connectedWallet, file.id);
-      setActiveSetFile(file);
+      await botApi.activateSetFile(connectedWallet, fileId);
+      setActiveSetFile({ ...file, id: fileId });
       const res = await botApi.getSetFiles(connectedWallet);
       setSetFiles(res.setFiles || []);
     } catch (err) {
@@ -38,14 +43,19 @@ export default function SetFileManager() {
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (fileOrId) => {
     if (!connectedWallet) return;
+    const fileId = typeof fileOrId === 'object' ? (fileOrId.id || fileOrId._id) : fileOrId;
+    if (!fileId) {
+      alert('Cannot delete file: missing ID');
+      return;
+    }
     if (!confirm('Delete this set file?')) return;
     try {
-      await botApi.deleteSetFile(connectedWallet, id);
+      await botApi.deleteSetFile(connectedWallet, fileId);
       const res = await botApi.getSetFiles(connectedWallet);
       setSetFiles(res.setFiles || []);
-      if (activeSetFile?.id === id) setActiveSetFile(null);
+      if (activeSetFile?.id === fileId) setActiveSetFile(null);
     } catch (err) {
       alert(err.message);
     }
@@ -66,8 +76,10 @@ export default function SetFileManager() {
     }
     setNameError(null);
 
+    const fileId = currentFile.id || `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const payload = {
       ...currentFile,
+      id: fileId,
       name: currentFile.name.trim(),
       tradeSizeSol: Number(currentFile.tradeSizeSol || 0.1),
       slippageBps: Number(currentFile.slippageBps || 500),
@@ -123,6 +135,7 @@ export default function SetFileManager() {
   const startNew = () => {
     setNameError(null);
     setCurrentFile({
+      id: `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       name: 'New Profile',
       tradeSizeSol: 0.1,
       slippageBps: 500,

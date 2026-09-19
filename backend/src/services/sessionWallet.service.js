@@ -2,7 +2,7 @@ import { Keypair, Connection, PublicKey, Transaction,
          SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import crypto from 'crypto';
-import { saveSessionWallet, getSessionWallet, deactivateSession } from '../db/database.js';
+import { saveSessionWallet, getSessionWallet, deactivateSession, archiveSessionWallet, getArchivedSessions } from '../db/database.js';
 
 const ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_SECRET || 'MEME_CAT_32_CHAR_SECRET_KEY!99';
 const RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
@@ -138,14 +138,27 @@ export class SessionWalletService {
    * Export decrypted private key for user self-custody.
    * Requires proof of Phantom wallet ownership via cryptographic signature.
    */
-  async exportPrivateKey(userWallet, signature, message) {
+  async exportPrivateKey(userWallet, signature, message, sessionPubkey = null) {
     if (!this.verifySignature(userWallet, signature, message)) {
       throw new Error('Invalid cryptographic signature. Ownership of Phantom wallet could not be verified.');
     }
 
-    const session = await getSessionWallet(userWallet);
+    let session = null;
+    if (sessionPubkey) {
+      const active = await getSessionWallet(userWallet);
+      if (active && active.session_pubkey === sessionPubkey) {
+        session = active;
+      } else {
+        const backups = await getArchivedSessions(userWallet);
+        const match = backups.find(b => b.session_pubkey === sessionPubkey);
+        if (match) session = match;
+      }
+    } else {
+      session = await getSessionWallet(userWallet);
+    }
+
     if (!session) {
-      throw new Error(`No active session wallet found for address ${userWallet}`);
+      throw new Error(`No active or archived session wallet found for address ${userWallet}`);
     }
 
     const privkey = this._decrypt(session.encrypted_privkey);
@@ -212,6 +225,88 @@ export class SessionWalletService {
   async deactivate(userWallet) {
     await deactivateSession(userWallet);
     console.log(`[SESSION] Deactivated session for ${userWallet.slice(0,8)}...`);
+  }
+
+  /**
+   * Safely deletes a session wallet:
+   * 1. Checks on-chain balance.
+   * 2. If balance > 0 (greater than gas fee), sweeps 100% of remaining funds back to the user's main wallet.
+   * 3. Permanently archives the private key in the backup vault so it is NEVER lost.
+   * 4. Clears active session so user can create a brand new one immediately.
+   */
+  async deleteAndRefundSession(userWallet) {
+    const session = await getSessionWallet(userWallet);
+    if (!session) {
+      return {
+        success: true,
+        refundedSol: 0,
+        refundTx: null,
+        message: 'No active session wallet found to delete.',
+      };
+    }
+
+    let refundTx = null;
+    let refundedSol = 0;
+
+    try {
+      const keypair = await this.getKeypair(userWallet);
+      const balance = await this.connection.getBalance(keypair.publicKey);
+      const networkFee = 5000; // ~0.000005 SOL
+      const transferAmount = balance - networkFee;
+
+      if (transferAmount > 0) {
+        console.log(`[SESSION DELETE] Found ${balance / LAMPORTS_PER_SOL} SOL. Automatically refunding ${transferAmount / LAMPORTS_PER_SOL} SOL to ${userWallet.slice(0, 8)}...`);
+        const tx = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: keypair.publicKey,
+            toPubkey:   new PublicKey(userWallet),
+            lamports:   transferAmount,
+          })
+        );
+        refundTx = await sendAndConfirmTransaction(this.connection, tx, [keypair]);
+        refundedSol = transferAmount / LAMPORTS_PER_SOL;
+        console.log(`[SESSION DELETE] Refund successful! Tx: ${refundTx}`);
+      }
+    } catch (refundErr) {
+      console.error(`[SESSION DELETE] Auto-refund failed:`, refundErr.message);
+      throw new Error(`Refund transfer failed: ${refundErr.message}. Session was NOT deleted to protect your funds.`);
+    }
+
+    // Always archive the encrypted key in the permanent backup vault so funds/keys are NEVER lost
+    await archiveSessionWallet({
+      userWallet,
+      sessionPubkey: session.session_pubkey,
+      encryptedPrivkey: session.encrypted_privkey,
+      refundTx,
+      refundedSol,
+      archivedAt: new Date().toISOString(),
+      reason: 'user_delete_and_reset',
+    });
+
+    // Remove from active sessions
+    await deactivateSession(userWallet);
+
+    return {
+      success: true,
+      sessionPubkey: session.session_pubkey,
+      refundedSol,
+      refundTx,
+      message: refundedSol > 0
+        ? `Session safely deleted! Automatically refunded ${refundedSol.toFixed(4)} SOL back to your connected Phantom wallet. Private key permanently preserved in backup vault.`
+        : `Session safely deleted and private key permanently preserved in backup vault.`,
+    };
+  }
+
+  async getBackups(userWallet) {
+    const raw = await getArchivedSessions(userWallet);
+    return (raw || []).map(b => ({
+      session_pubkey: b.session_pubkey,
+      refund_tx: b.refund_tx,
+      refunded_sol: b.refunded_sol,
+      archived_at: b.archived_at,
+      status: b.status,
+      reason: b.reason,
+    }));
   }
 
   // ── Encryption helpers ──

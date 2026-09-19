@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { Transaction, SystemProgram, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import bs58 from 'bs58';
@@ -19,6 +19,8 @@ import {
   IconLock,
   IconSolana,
   IconShield,
+  IconRefresh,
+  IconExternal,
 } from './Icons';
 
 const FIBONACCI_SPOTS = [
@@ -66,8 +68,33 @@ export default function BotControlsModal({ isOpen, onClose }) {
   // Export Private Key state
   const [isExportingKey, setIsExportingKey] = useState(false);
   const [exportedKey, setExportedKey] = useState(null);
+  const [exportedPubkey, setExportedPubkey] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [copiedExportKey, setCopiedExportKey] = useState(false);
+
+  // Backup Vault state
+  const [backups, setBackups] = useState([]);
+  const [isBackupsOpen, setIsBackupsOpen] = useState(false);
+  const [loadingBackups, setLoadingBackups] = useState(false);
+
+  const loadBackups = async () => {
+    if (!connectedWallet) return;
+    setLoadingBackups(true);
+    try {
+      const res = await botApi.getSessionBackups(connectedWallet);
+      if (res?.backups) setBackups(res.backups);
+    } catch (err) {
+      console.warn('Failed to load session backups:', err.message);
+    } finally {
+      setLoadingBackups(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && connectedWallet) {
+      loadBackups();
+    }
+  }, [isOpen, connectedWallet]);
 
   if (!isOpen) return null;
 
@@ -84,6 +111,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
       setSessionBalance(res.balanceSol || 0);
       setStatusMsg('Session wallet activated! Deposit SOL to start autonomous trading.');
       setTimeout(() => setStatusMsg(null), 4000);
+      loadBackups();
     } catch (err) {
       alert(`Error creating session wallet: ${err.message}`);
       setStatusMsg(null);
@@ -142,12 +170,13 @@ export default function BotControlsModal({ isOpen, onClose }) {
     }
   };
 
-  const handleExportPrivateKey = async () => {
+  const handleExportPrivateKey = async (targetPubkey = null) => {
     if (!connectedWallet || !publicKey) {
       alert('Please connect your Phantom or Solflare wallet first.');
       return;
     }
-    if (!sessionPubkey) {
+    const pubkeyToExport = targetPubkey || sessionPubkey;
+    if (!pubkeyToExport) {
       alert('No session wallet exists to export.');
       return;
     }
@@ -158,14 +187,15 @@ export default function BotControlsModal({ isOpen, onClose }) {
 
     setIsExportingKey(true);
     try {
-      const message = `Authorize private key export for MEME_CAT Session (${sessionPubkey}) at timestamp ${Date.now()}`;
+      const message = `Authorize private key export for MEME_CAT Session (${pubkeyToExport}) at timestamp ${Date.now()}`;
       const messageBytes = new TextEncoder().encode(message);
 
       const signatureBytes = await signMessage(messageBytes);
       const signatureB58 = bs58.encode(signatureBytes);
 
-      const res = await botApi.exportKey(connectedWallet, signatureB58, message);
+      const res = await botApi.exportKey(connectedWallet, signatureB58, message, pubkeyToExport);
       setExportedKey(res.privateKey);
+      setExportedPubkey(pubkeyToExport);
       setShowExportModal(true);
     } catch (err) {
       if (err.message?.includes('User rejected') || err.message?.includes('cancelled')) {
@@ -175,6 +205,44 @@ export default function BotControlsModal({ isOpen, onClose }) {
       }
     } finally {
       setIsExportingKey(false);
+    }
+  };
+
+  const handleDeleteSession = async () => {
+    if (!connectedWallet) {
+      alert('Please connect your Phantom or Solflare wallet first.');
+      return;
+    }
+    if (!sessionPubkey) {
+      alert('No active session wallet to delete.');
+      return;
+    }
+
+    const hasFunds = sessionBalance > 0.0001;
+    const msg = hasFunds
+      ? `Delete & Reset Session Wallet?\n\nAUTOMATIC REFUND GUARANTEE:\nThis session wallet currently holds ${sessionBalance.toFixed(4)} SOL.\n100% of remaining funds will be automatically swept back to your connected Phantom wallet before deletion.\n\nYour session private key will also be permanently archived in the Backup Vault for self-custody.\n\nProceed with safe deletion?`
+      : `Delete & Reset Session Wallet?\n\nYour session private key will be permanently archived in the Backup Vault so you can always export it later.\n\nYou can immediately create a brand new session wallet after resetting.\n\nProceed with reset?`;
+
+    if (!confirm(msg)) return;
+
+    setLoading(true);
+    setStatusMsg(hasFunds ? 'Sweeping funds back to your Phantom wallet and archiving key...' : 'Archiving session and resetting...');
+    try {
+      const res = await botApi.deleteSession(connectedWallet);
+      setSessionPubkey(null);
+      setSessionBalance(0);
+      if (res.refundedSol > 0) {
+        setStatusMsg(`Session deleted! Refunded ${res.refundedSol.toFixed(4)} SOL back to your connected wallet.`);
+      } else {
+        setStatusMsg('Session deleted and permanently archived in Backup Vault.');
+      }
+      setTimeout(() => setStatusMsg(null), 5000);
+      loadBackups();
+    } catch (err) {
+      alert(`Session deletion failed: ${err.message}`);
+      setStatusMsg(null);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -317,12 +385,20 @@ export default function BotControlsModal({ isOpen, onClose }) {
             <div className="p-4 rounded-xl bg-[#080c14] border border-slate-800 mb-4 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
-                Autonomous Delegated Session
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-cyan-400 tracking-wider">
+                  Autonomous Delegated Session
+                </span>
+                {sessionPubkey && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-950/80 border border-emerald-800 text-emerald-300 flex items-center gap-1">
+                    <IconBolt className="w-2.5 h-2.5 text-emerald-400" />
+                    24h Active Background
+                  </span>
+                )}
+              </div>
               <h3 className="text-sm font-bold text-white mt-0.5">Trading Session Keypair</h3>
               <p className="text-[11px] text-slate-400">
-                Executes orders 24/7 with zero browser popups. Isolated from your main wallet.
+                Executes orders 24/7 even when website or app is closed. Isolated from your main wallet.
               </p>
             </div>
             <div className="text-right">
@@ -414,11 +490,11 @@ export default function BotControlsModal({ isOpen, onClose }) {
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
                     {/* Export Private Key Button */}
                     <button
                       type="button"
-                      onClick={handleExportPrivateKey}
+                      onClick={() => handleExportPrivateKey(sessionPubkey)}
                       disabled={isExportingKey || !connectedWallet}
                       className="px-2.5 py-1 rounded bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all flex items-center gap-1"
                       title="Export private key to import into Phantom wallet"
@@ -436,6 +512,18 @@ export default function BotControlsModal({ isOpen, onClose }) {
                       title="Sweep all funds back to your connected Phantom wallet"
                     >
                       Withdraw All
+                    </button>
+
+                    {/* Safe Delete & Reset Session Button */}
+                    <button
+                      type="button"
+                      onClick={handleDeleteSession}
+                      disabled={loading || !connectedWallet}
+                      className="px-2.5 py-1 rounded bg-red-950/80 border border-red-800/80 hover:bg-red-900/80 text-red-300 text-xs font-semibold transition-all flex items-center gap-1 disabled:opacity-50"
+                      title="Safely delete and reset session (automatically sweeps all funds and archives private key)"
+                    >
+                      <IconTrash className="w-3 h-3 text-red-400" />
+                      <span>Delete &amp; Reset</span>
                     </button>
                   </div>
                 </div>
@@ -503,6 +591,89 @@ export default function BotControlsModal({ isOpen, onClose }) {
               </div>
             )}
           </div>
+
+          {/* Backup Vault Collapsible Accordion: Permanent Self-Custody Archive */}
+          <div className="pt-1 border-t border-slate-800/80">
+            <button
+              type="button"
+              onClick={() => {
+                const nextState = !isBackupsOpen;
+                setIsBackupsOpen(nextState);
+                if (nextState) loadBackups();
+              }}
+              className="w-full flex items-center justify-between py-1 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              <span className="flex items-center gap-1.5 font-semibold text-slate-300">
+                <IconKey className="w-3.5 h-3.5 text-amber-400" />
+                <span>Session Backup Vault ({backups.length} Archived Keys)</span>
+              </span>
+              {isBackupsOpen ? (
+                <IconChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <IconChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
+
+            {isBackupsOpen && (
+              <div className="mt-2 p-3 rounded-lg bg-slate-950/90 border border-slate-800 space-y-2 text-xs">
+                <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+                  <span>Permanent archival of all active &amp; reset session keypairs.</span>
+                  <button
+                    type="button"
+                    onClick={loadBackups}
+                    disabled={loadingBackups}
+                    className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300"
+                  >
+                    <IconRefresh className={`w-3 h-3 ${loadingBackups ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+                {backups.length === 0 ? (
+                  <p className="text-[11px] text-slate-500 italic py-1">No archived sessions found for this wallet.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                    {backups.map((b, idx) => (
+                      <div key={idx} className="p-2 rounded bg-slate-900 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 font-mono text-[11px] text-slate-300">
+                            <span className="text-cyan-400">{b.session_pubkey ? `${b.session_pubkey.slice(0, 6)}...${b.session_pubkey.slice(-4)}` : 'Session'}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 uppercase">{b.reason || 'Archived'}</span>
+                            {b.refunded_sol > 0 && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-bold">
+                                Refunded {b.refunded_sol.toFixed(4)} SOL
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            {b.archived_at ? new Date(b.archived_at).toLocaleString() : 'Past Session'}
+                            {b.refund_tx && (
+                              <a
+                                href={`https://solscan.io/tx/${b.refund_tx}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="ml-2 text-cyan-400 hover:underline inline-flex items-center gap-0.5"
+                              >
+                                Solscan <IconExternal className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleExportPrivateKey(b.session_pubkey)}
+                          disabled={isExportingKey}
+                          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 text-[11px] font-semibold transition-all shrink-0 flex items-center gap-1 self-start sm:self-auto"
+                        >
+                          <IconKey className="w-2.5 h-2.5 text-amber-400" />
+                          <span>Export Key</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Export Private Key Modal */}
@@ -533,6 +704,12 @@ export default function BotControlsModal({ isOpen, onClose }) {
               </div>
 
               <div>
+                {exportedPubkey && (
+                  <div className="mb-2 text-[11px] text-slate-400 font-mono">
+                    <span>Session Address: </span>
+                    <span className="text-cyan-300 font-bold">{exportedPubkey}</span>
+                  </div>
+                )}
                 <label className="text-[11px] text-slate-400 block mb-1 font-mono">Base58 Private Key</label>
                 <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs text-amber-300 break-all select-all flex items-center justify-between gap-2">
                   <span>{exportedKey}</span>

@@ -27,6 +27,14 @@ export const botApi = {
 
   getSession: (wallet) => request(`/session/${wallet}`),
 
+  deleteSession: (userWallet) =>
+    request('/session/delete', {
+      method: 'POST',
+      body: JSON.stringify({ userWallet }),
+    }),
+
+  getSessionBackups: (wallet) => request(`/session/backups/${wallet}`),
+
   withdrawSession: (userWallet) =>
     request('/withdraw', {
       method: 'POST',
@@ -43,10 +51,10 @@ export const botApi = {
 
   getTrades: (wallet) => request(`/trades/${wallet}`),
 
-  exportKey: (userWallet, signature, message) =>
+  exportKey: (userWallet, signature, message, sessionPubkey) =>
     request('/export-key', {
       method: 'POST',
-      body: JSON.stringify({ userWallet, signature, message }),
+      body: JSON.stringify({ userWallet, signature, message, sessionPubkey }),
     }),
 
   verifyDeposit: (userWallet, txSignature) =>

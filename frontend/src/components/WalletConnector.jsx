@@ -33,6 +33,7 @@ export default function WalletConnector() {
     setConnected(address || null);
     if (!address) {
       setSessionBalance(0);
+      setSessionPubkey(null);
       return;
     }
 
@@ -47,9 +48,12 @@ export default function WalletConnector() {
         // Session
         if (sessionRes.status === 'fulfilled') {
           const res = sessionRes.value;
-          if (res.sessionPubkey) setSessionPubkey(res.sessionPubkey);
-          if (res.balanceSol !== undefined) setSessionBalance(res.balanceSol);
+          setSessionPubkey(res.sessionPubkey || null);
+          setSessionBalance(res.balanceSol || 0);
           if (res.botConfig) setBotConfig(res.botConfig);
+        } else {
+          setSessionPubkey(null);
+          setSessionBalance(0);
         }
         // Trades
         if (tradesRes.status === 'fulfilled') {
