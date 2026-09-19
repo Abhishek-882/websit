@@ -4,6 +4,7 @@ import { recordTrade, hasBought, updateTradeTP, getTrades, closeTrade, getBotCon
 import { sessionWalletService } from './sessionWallet.service.js';
 import { tradeExecutionService } from './tradeExecution.service.js';
 import { jupiterPriceService } from './jupiterPrice.service.js';
+import { jupiterLimitOrderService } from './jupiterLimitOrder.service.js';
 
 const JUPITER_API = process.env.JUPITER_API_URL || 'https://quote-api.jup.ag/v6';
 const RPC_URL     = process.env.SOLANA_RPC_URL   || 'https://api.mainnet-beta.solana.com';
@@ -19,7 +20,7 @@ export class TradingService {
    * AUTONOMOUS BUY: swaps SOL for meme token using delegated session keypair.
    * Zero wallet popups — signs directly on server.
    */
-  async autoBuy({ userWallet, tokenAddress, coinName, coinSymbol, amountSol, slippageBps = 500, useJito = true, feeSpeed = 'fast' }) {
+  async autoBuy({ userWallet, tokenAddress, coinName, coinSymbol, amountSol, slippageBps = 500, useJito = true, feeSpeed = 'fast', tpPct = null, slPct = null }) {
     if (!userWallet || !tokenAddress) {
       throw new Error('Missing userWallet or tokenAddress');
     }
@@ -90,11 +91,19 @@ export class TradingService {
     // 8. Record in DB
     const outAmount = parseInt(quote.outAmount, 10) || 1;
     const buyPrice = amountSol / outAmount;
+
+    // Estimate buy price in USD for limit order pricing
+    // Use Jupiter price cache if available, fallback to SOL estimate
+    const solPriceUsd = 145; // Conservative fallback
+    const jupPrice = jupiterPriceService.getPrice(tokenAddress);
+    const buyPriceUsd = jupPrice?.usdPrice || ((amountSol * solPriceUsd) / (outAmount / 1e6));
+
     const trade = await recordTrade({
       coin_address: tokenAddress,
       coin_name: coinName,
       coin_symbol: coinSymbol,
       buy_price_sol: buyPrice,
+      buy_price_usd: buyPriceUsd,
       amount_sol: amountSol,
       out_amount: outAmount,
       wallet_address: userWallet,
@@ -103,7 +112,27 @@ export class TradingService {
       method: execRes.method,
     });
 
-    console.log(`[BOT] ✅ AUTO-BUY ${coinSymbol} | ${amountSol} SOL | tx: ${sig.slice(0, 12)}...`);
+    console.log(`[BOT] AUTO-BUY ${coinSymbol} | ${amountSol} SOL | tx: ${sig.slice(0, 12)}...`);
+
+    // 9. Place on-chain TP/SL sell limit orders immediately (zero server dependency)
+    if ((tpPct && tpPct > 0) || (slPct && slPct > 0)) {
+      jupiterLimitOrderService.placeExitOrders({
+        connection: this.connection,
+        keypair,
+        tokenMint: tokenAddress,
+        tokenAmountRaw: outAmount,
+        buyPriceUsd,
+        tpPct,
+        slPct,
+      }).then(result => {
+        if (result.errors.length > 0) {
+          console.warn(`[Jupiter Limit] Exit order warnings for ${coinSymbol}:`, result.errors.map(e => e.message).join(', '));
+        }
+      }).catch(err => {
+        console.warn(`[Jupiter Limit] Exit order placement notice for ${coinSymbol}:`, err.message);
+      });
+    }
+
     return { success: true, txSignature: sig, tradeId: trade.id, outAmount };
   }
 

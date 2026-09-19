@@ -3,6 +3,7 @@ import { tokenAggregatorService } from '../services/tokenAggregator.service.js';
 import { gmgnKeyPool } from '../services/gmgnKeyPool.service.js';
 import { sessionWalletService } from '../services/sessionWallet.service.js';
 import { tradingService } from '../services/trading.service.js';
+import { jupiterPriceService } from '../services/jupiterPrice.service.js';
 import { getBotConfig, updateBotConfig, getTrades, saveSetFile, getSetFiles, getSetFile, deleteSetFile, getActiveSetFile, setActiveSetFile } from '../db/database.js';
 import { sendOtp, verifyOtp, verifyToken, setPinForUser, verifyPinAndIssueToken, hasPinSet } from '../services/auth.service.js';
 
@@ -270,6 +271,54 @@ router.get('/bot/trades/:wallet', async (req, res) => {
   try {
     const trades = await getTrades(req.params.wallet);
     res.json({ success: true, trades: trades || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/bot/portfolio/live/:wallet
+ * Returns live prices and unrealized P&L for all open trades.
+ * Powered by Jupiter Price V3 cache (refreshed every 1.5s).
+ */
+router.get('/bot/portfolio/live/:wallet', async (req, res) => {
+  try {
+    const wallet = req.params.wallet;
+    const trades = await getTrades(wallet);
+    const openTrades = (trades || []).filter(t => !t.closed_at && !t.is_closed);
+
+    const livePositions = openTrades.map(trade => {
+      const jupPrice = jupiterPriceService.getPrice(trade.coin_address);
+      const currentPriceUsd = jupPrice?.usdPrice || null;
+      const buyPriceUsd = trade.buy_price_usd || null;
+
+      let unrealizedPnlPct = null;
+      let unrealizedPnlUsd = null;
+      if (currentPriceUsd && buyPriceUsd && buyPriceUsd > 0) {
+        unrealizedPnlPct = ((currentPriceUsd - buyPriceUsd) / buyPriceUsd) * 100;
+        const tokenAmountUi = (trade.out_amount || 0) / Math.pow(10, 6);
+        unrealizedPnlUsd = tokenAmountUi * (currentPriceUsd - buyPriceUsd);
+      }
+
+      return {
+        tradeId: trade.id,
+        coinAddress: trade.coin_address,
+        coinSymbol: trade.coin_symbol,
+        coinName: trade.coin_name,
+        buyPriceUsd,
+        currentPriceUsd,
+        unrealizedPnlPct: unrealizedPnlPct != null ? parseFloat(unrealizedPnlPct.toFixed(2)) : null,
+        unrealizedPnlUsd: unrealizedPnlUsd != null ? parseFloat(unrealizedPnlUsd.toFixed(4)) : null,
+        priceAgeMs: jupPrice?.ageMs || null,
+        isStale: jupPrice?.isStale ?? true,
+        amountSol: trade.amount_sol,
+        outAmount: trade.out_amount,
+        txSignature: trade.tx_signature,
+        boughtAt: trade.created_at,
+      };
+    });
+
+    res.json({ success: true, positions: livePositions, count: livePositions.length });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

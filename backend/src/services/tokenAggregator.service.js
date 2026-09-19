@@ -149,22 +149,25 @@ export class TokenAggregatorService {
   }
 
   /**
-   * 1.5s Position Monitor — dedicated high-frequency loop for TP/SL and Limit Orders.
-   * Runs independently from the 12s GMGN ticker.
-   * Uses Jupiter Price V3 as primary price source (1.5s freshness).
+   * 1.5s Position Monitor — repurposed for DCA pending BUY limit orders only.
+   *
+   * TP/SL exits are now placed as Jupiter on-chain sell limit orders at buy time.
+   * They execute via Jupiter keepers — no server polling needed for exits.
+   *
+   * The 1.5s Jupiter price polling continues for live portfolio display only.
+   * See GET /api/portfolio/live for the price feed.
    */
   startPositionMonitor() {
     if (this.positionMonitorTimer) return;
-    console.log('[Token Aggregator] 1.5s position monitor active (TP/SL/Limit orders).');
+    console.log('[Token Aggregator] 1.5s monitor active (DCA limit orders + live portfolio prices).');
 
     this.positionMonitorTimer = setInterval(async () => {
       try {
-        // Check limit orders using Jupiter prices with tokensMap fallback
+        // Check pending DCA buy limit orders using Jupiter prices
         await this.checkPendingLimitOrdersFast();
-        // Check TP/SL positions using Jupiter prices with tokensMap fallback
-        await tradingService.checkPositionsAgainstStrategy(this.tokensMap);
+        // TP/SL are on-chain Jupiter sell orders — no server check needed here
       } catch (err) {
-        // Position monitor error caught cleanly
+        // Caught cleanly
       }
     }, 1500);
   }
@@ -521,6 +524,8 @@ export class TokenAggregatorService {
         const orderType = tradeCfg.orderType || 'market';
         const limitDipPct = Math.abs(Number(tradeCfg.limitDipPct || 20));
         const feeSpeed = tradeCfg.feeSpeed || activeSetFile.feeSpeed || 'fast';
+        const tpPct = tradeCfg.tpPct || activeSetFile.tpPct || null;
+        const slPct = tradeCfg.slPct || activeSetFile.slPct || null;
 
         // Normalized re-entry cooldown (default 7 days)
         const reentryEnabled = activeSetFile.reentryRule ? activeSetFile.reentryRule.enabled !== false : (activeSetFile.reentry ? (activeSetFile.reentry.enabled ?? true) : true);
@@ -646,6 +651,8 @@ export class TokenAggregatorService {
               slippageBps,
               useJito,
               feeSpeed: tradeCfg.feeSpeed || 'fast',
+              tpPct,
+              slPct,
             }).then(() => {
               // Subscribe to Jupiter price monitor for real-time TP/SL tracking
               jupiterPriceService.subscribeMints([token.address]);
@@ -712,6 +719,8 @@ export class TokenAggregatorService {
               slippageBps,
               useJito,
               feeSpeed: tradeCfg.feeSpeed || 'fast',
+              tpPct,
+              slPct,
             }).then(() => {
               // Subscribe to Jupiter price monitor for real-time TP/SL tracking
               jupiterPriceService.subscribeMints([token.address]);

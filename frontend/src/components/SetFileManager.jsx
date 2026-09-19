@@ -139,6 +139,8 @@ export default function SetFileManager() {
         limitDipPct: Number(currentFile.limitDipPct || 20),
         maxPositions: Number(currentFile.maxPositions || 5),
         feeSpeed: currentFile.feeSpeed || 'fast',
+        tpPct: currentFile.tpPct ? Number(currentFile.tpPct) : null,
+        slPct: currentFile.slPct ? Number(currentFile.slPct) : null,
       },
       buyFilters: {
         mcapMin: Number(currentFile.buyFilters?.mcapMin || 0),
@@ -298,6 +300,49 @@ export default function SetFileManager() {
             </div>
             <p className="text-[9px] text-slate-500 mt-1">Slow: no Jito (cheapest) | Medium: Jito p50 tip | Fast: Jito p99 tip (highest priority)</p>
           </div>
+
+          {/* On-chain TP / SL — placed as Jupiter sell limit orders at buy time */}
+          <div className="pt-2">
+            <label className="text-[11px] text-slate-400 block mb-1.5">
+              Exit Orders — On-Chain TP / SL
+            </label>
+            <p className="text-[9px] text-slate-500 mb-2">Placed as Jupiter sell limit orders the moment a buy executes. Trigger on-chain — no server needed.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Take Profit (%)</label>
+                <input
+                  type="number" min="1" max="10000"
+                  placeholder="e.g. 50"
+                  value={currentFile.tpPct || ''}
+                  onChange={e => setCurrentFile({...currentFile, tpPct: parseFloat(e.target.value) || null})}
+                  className="w-full px-2 py-1.5 bg-slate-900 border border-emerald-900 rounded text-xs text-white placeholder-slate-600"
+                />
+                <p className="text-[9px] text-slate-500 mt-0.5">Sell at +{currentFile.tpPct || '?'}% above buy price</p>
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Stop Loss (%)</label>
+                <input
+                  type="number" min="1" max="99"
+                  placeholder="e.g. 20"
+                  value={currentFile.slPct || ''}
+                  onChange={e => setCurrentFile({...currentFile, slPct: parseFloat(e.target.value) || null})}
+                  className="w-full px-2 py-1.5 bg-slate-900 border border-red-900 rounded text-xs text-white placeholder-slate-600"
+                />
+                <p className="text-[9px] text-slate-500 mt-0.5">Sell at -{currentFile.slPct || '?'}% below buy price</p>
+              </div>
+            </div>
+            {/* Preset pills */}
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {[{tp:50,sl:15},{tp:100,sl:20},{tp:200,sl:25},{tp:500,sl:30}].map(p => (
+                <button key={`${p.tp}-${p.sl}`} type="button"
+                  onClick={() => setCurrentFile({...currentFile, tpPct: p.tp, slPct: p.sl})}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[9px] font-mono">
+                  TP{p.tp}% / SL{p.sl}%
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="pt-2 border-t border-slate-800">
             <label className="text-xs font-bold text-cyan-300">Autonomous Buy Criteria (Set File Filters)</label>
             <p className="text-[10px] text-slate-400 mb-2">Changing filters on the home page will NOT affect this bot once loaded.</p>
