@@ -26,14 +26,8 @@ export class SessionWalletService {
    * Create or retrieve a session wallet for a user.
    */
   async createSession(userWallet, botConfig = {}) {
-    // Ensure user has an active set file bound to the session
+    // Check if user has an active set file bound to the session
     const activeSet = await getActiveSetFile(userWallet);
-    if (!activeSet) {
-      const userFiles = await getSetFiles(userWallet);
-      if (userFiles && userFiles.length > 0) {
-        await setActiveSetFile(userWallet, userFiles[userFiles.length - 1].id);
-      }
-    }
 
     const existing = await getSessionWallet(userWallet);
     if (existing) {

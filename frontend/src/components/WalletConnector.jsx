@@ -72,19 +72,19 @@ export default function WalletConnector() {
           const currentCached = useBotStore.getState().setFiles || [];
           if (Array.isArray(res.setFiles) && res.setFiles.length > 0) {
             setSetFiles(res.setFiles);
-            const active = res.setFiles.find(f => f.isActive) || res.setFiles[res.setFiles.length - 1];
-            setActiveSetFile(active || null);
+            const active = res.setFiles.find(f => f.isActive) || null;
+            setActiveSetFile(active);
           } else if (currentCached.length > 0) {
             // Auto-heal: Server might have restarted or has empty setFiles, but localStorage has cached files
             Promise.all(currentCached.map(f => botApi.saveSetFile(address, f))).then(() => {
-              const cachedActive = useBotStore.getState().activeSetFile || currentCached[0];
-              if (cachedActive?.id) {
+              const cachedActive = useBotStore.getState().activeSetFile;
+              if (cachedActive?.isActive && cachedActive?.id) {
                 botApi.activateSetFile(address, cachedActive.id).then(() => {
                   botApi.getSetFiles(address).then(r => {
                     if (r?.setFiles) {
                       setSetFiles(r.setFiles);
-                      const act = r.setFiles.find(f => f.isActive) || r.setFiles[0];
-                      setActiveSetFile(act || null);
+                      const act = r.setFiles.find(f => f.isActive) || null;
+                      setActiveSetFile(act);
                     }
                   });
                 });

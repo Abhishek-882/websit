@@ -435,36 +435,42 @@ console.log('▶ [LOOP 10/10] 24/7 Set File Persistence, Auto-Activation & Fallb
 for (let i = 0; i < 100; i++) {
   const testWallet = `TestWallet_${i}_${Date.now()}`;
   
-  // 10a: First saveSetFile must auto-activate
+  // 10a: Any new set file must be DEACTIVATED by default
   const file1 = await saveSetFile(testWallet, {
     name: `Profile_1_${i}`,
     tradeSizeSol: 0.1 + (i * 0.01),
     slippageBps: 500,
   });
-  reportAssertion(file1.isActive === true, `First set file must auto-activate at i=${i}`);
+  reportAssertion(file1.isActive === false, `New set file must be deactivated by default at i=${i}`);
   
-  // 10b: getActiveSetFile returns file1
+  // 10b: getActiveSetFile returns null when all files are deactivated
+  const activeNone = await getActiveSetFile(testWallet);
+  reportAssertion(activeNone === null, `Active set file must be null when deactivated at i=${i}`);
+  
+  // 10c: Explicit activation activates file1
+  const activated1 = await setActiveSetFile(testWallet, file1.id);
+  reportAssertion(activated1 && activated1.isActive === true, `setActiveSetFile must activate file1 at i=${i}`);
   const active1 = await getActiveSetFile(testWallet);
-  reportAssertion(active1 && active1.id === file1.id, `Active set file must match file1 at i=${i}`);
-  reportAssertion(active1.isActive === true, `active1.isActive must be true at i=${i}`);
-  
-  // 10c: Saving a second file explicitly active deactivates the first
+  reportAssertion(active1 && active1.id === file1.id, `Active set file must now match file1 at i=${i}`);
+
+  // 10d: Explicit deactivation deactivates all files and persists
+  await setActiveSetFile(testWallet, null);
+  const activeAfterDeactivate = await getActiveSetFile(testWallet);
+  reportAssertion(activeAfterDeactivate === null, `Active set file must remain null after deactivation at i=${i}`);
+  const filesAfterDeactivate = await getSetFiles(testWallet);
+  reportAssertion(filesAfterDeactivate.every(f => !f.isActive), `All files must remain deactivated at i=${i}`);
+
+  // 10e: Saving a second file explicitly active activates it
   const file2 = await saveSetFile(testWallet, {
     name: `Profile_2_${i}`,
     isActive: true,
     tradeSizeSol: 0.2,
   });
-  reportAssertion(file2.isActive === true, `file2 must be active at i=${i}`);
+  reportAssertion(file2.isActive === true, `file2 explicitly active must be active at i=${i}`);
   const active2 = await getActiveSetFile(testWallet);
   reportAssertion(active2 && active2.id === file2.id, `Active set file must now be file2 at i=${i}`);
   
-  // 10d: getSetFiles returns both and ensures exactly one is active
-  const allFiles = await getSetFiles(testWallet);
-  reportAssertion(allFiles.length === 2, `Must have exactly 2 set files at i=${i}`);
-  const activeCount = allFiles.filter(f => f.isActive).length;
-  reportAssertion(activeCount === 1, `Exactly 1 set file must be active at i=${i}`);
-
-  // 10e: 24/7 active sessions must remain active
+  // 10f: 24/7 active sessions must remain active
   const session = await saveSessionWallet({
     userWallet: testWallet,
     sessionPubkey: `SessionPubkey_${i}`,

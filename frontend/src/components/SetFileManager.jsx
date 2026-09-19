@@ -17,35 +17,14 @@ export default function SetFileManager() {
   const [nameError, setNameError] = useState(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState(null);
 
-  // Sync set files from backend or auto-heal from localStorage on mount/wallet change
+  // Sync set files from backend on mount/wallet change
   useEffect(() => {
     if (!connectedWallet) return;
     botApi.getSetFiles(connectedWallet).then(res => {
       const serverFiles = res?.setFiles || [];
-      if (serverFiles.length > 0) {
-        setSetFiles(serverFiles);
-        const active = serverFiles.find(f => f.isActive) || serverFiles[serverFiles.length - 1];
-        if (active) {
-          setActiveSetFile(active);
-        }
-      } else if (setFiles && setFiles.length > 0) {
-        // Self-healing: Local storage has files, but server doesn't (e.g. server restart)
-        // Auto-sync local files to server so it continues running 24/7!
-        Promise.all(setFiles.map(f => botApi.saveSetFile(connectedWallet, f))).then(() => {
-          const active = activeSetFile || setFiles[0];
-          if (active?.id) {
-            botApi.activateSetFile(connectedWallet, active.id).then(() => {
-              botApi.getSetFiles(connectedWallet).then(r => {
-                if (r?.setFiles) {
-                  setSetFiles(r.setFiles);
-                  const act = r.setFiles.find(f => f.isActive) || r.setFiles[0];
-                  if (act) setActiveSetFile(act);
-                }
-              });
-            });
-          }
-        });
-      }
+      setSetFiles(serverFiles);
+      const active = serverFiles.find(f => f.isActive) || null;
+      setActiveSetFile(active);
     }).catch(err => {
       console.warn('Failed to load set files:', err.message);
     });
@@ -86,6 +65,8 @@ export default function SetFileManager() {
       setActiveSetFile(null);
       const res = await botApi.getSetFiles(connectedWallet);
       setSetFiles(res.setFiles || []);
+      setSaveSuccessMsg('Set file deactivated. Autonomous trading paused.');
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
     } catch (err) {
       alert(err.message);
     }
@@ -109,7 +90,7 @@ export default function SetFileManager() {
       const remaining = res.setFiles || [];
       setSetFiles(remaining);
       if (activeSetFile?.id === fileId) {
-        const nextActive = remaining.find(f => f.isActive) || (remaining.length > 0 ? remaining[0] : null);
+        const nextActive = remaining.find(f => f.isActive) || null;
         setActiveSetFile(nextActive);
         if (nextActive?.id) {
           await botApi.activateSetFile(connectedWallet, nextActive.id);
@@ -145,12 +126,15 @@ export default function SetFileManager() {
     setNameError(null);
 
     const fileId = currentFile.id || `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const isExisting = currentFile.id && setFiles.some(f => f.id === currentFile.id);
+    // Any new set file is DEACTIVATED by default per user requirement
+    const shouldBeActive = isExisting ? Boolean(currentFile.isActive) : false;
 
     const payload = {
       ...currentFile,
       id: fileId,
       name: currentFile.name.trim(),
-      isActive: true, // Auto-activate on save per user agreement
+      isActive: shouldBeActive,
       tradeSizeSol: Number(currentFile.tradeSizeSol || 0.1),
       slippageBps: Number(currentFile.slippageBps || 500),
       orderType: currentFile.orderType || 'market',
@@ -201,11 +185,15 @@ export default function SetFileManager() {
       const res = await botApi.getSetFiles(connectedWallet);
       const updatedFiles = res.setFiles || [];
       setSetFiles(updatedFiles);
-      const active = updatedFiles.find(f => f.isActive) || updatedFiles[updatedFiles.length - 1];
-      if (active) setActiveSetFile(active);
+      const active = updatedFiles.find(f => f.isActive) || null;
+      setActiveSetFile(active);
       setIsEditing(false);
       setCurrentFile(null);
-      setSaveSuccessMsg(`Profile "${payload.name}" saved & set to ACTIVE for 24/7 background trading!`);
+      if (shouldBeActive) {
+        setSaveSuccessMsg(`Profile "${payload.name}" saved & is ACTIVE!`);
+      } else {
+        setSaveSuccessMsg(`Profile "${payload.name}" saved (Deactivated). Click "Activate" when ready to trade.`);
+      }
       setTimeout(() => setSaveSuccessMsg(null), 5000);
     } catch (err) {
       alert(err.message);
@@ -217,7 +205,7 @@ export default function SetFileManager() {
     setCurrentFile({
       id: `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       name: 'New Profile',
-      isActive: setFiles.length === 0,
+      isActive: false, // New profiles are always deactivated by default
       tradeSizeSol: 0.1,
       slippageBps: 500,
       orderType: 'market',
