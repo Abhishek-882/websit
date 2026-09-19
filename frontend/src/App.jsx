@@ -299,19 +299,21 @@ export default function App() {
       return;
     }
     triggerHaptic('tap');
-    const buyAmt = botConfig.buyAmountSol || 0.1;
+    const activeSetFile = useBotStore.getState().activeSetFile;
+    const buyAmt = activeSetFile?.tradeSizeSol || botConfig.buyAmountSol || 0.1;
     if (!confirm(`Execute autonomous purchase of ${buyAmt} SOL for $${token.symbol} (${token.name}) via Jupiter DEX?`)) {
       return;
     }
     try {
       const customSlippageBps = userPreferences.slippagePercent ? Math.round(userPreferences.slippagePercent * 100) : 500;
+      const slippageBps = activeSetFile?.slippageBps || botConfig.slippageBps || customSlippageBps;
       const res = await botApi.manualBuy({
         userWallet: connectedWallet,
         tokenAddress: token.address,
         coinName: token.name,
         coinSymbol: token.symbol,
         amountSol: buyAmt,
-        slippageBps: botConfig.slippageBps || customSlippageBps,
+        slippageBps: slippageBps,
       });
       if (res.success) {
         triggerHaptic('success');
