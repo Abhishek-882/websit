@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 import {
   PublicKey,
   SystemProgram,
@@ -58,16 +58,27 @@ export class TradeExecutionService {
     };
   }
 
-  async calculateDynamicTip(tradeSizeSol = 0.1) {
+  async calculateDynamicTip(tradeSizeSol = 0.1, jitoTier = 'fast') {
     const floor = await this.getTipFloor();
+    const p50 = floor.landed_tips_50th_percentile || 0.00005;
     const p99 = floor.landed_tips_99th_percentile || 0.0001;
     const maxTip = Math.min(0.01, tradeSizeSol * 0.05);
-    const recommended = Math.max(0.00002, Math.min(maxTip, p99 * 1.15));
+
+    let baseTip;
+    if (jitoTier === 'medium') {
+      // Medium: use p50 floor — cheaper, still lands most bundles
+      baseTip = Math.max(0.00001, Math.min(maxTip, p50 * 1.1));
+    } else {
+      // Fast (default): use p99 floor x 1.15 — highest priority
+      baseTip = Math.max(0.00002, Math.min(maxTip, p99 * 1.15));
+    }
 
     return {
-      tipSol: recommended,
-      tipLamports: Math.floor(recommended * LAMPORTS_PER_SOL),
+      tipSol: baseTip,
+      tipLamports: Math.floor(baseTip * LAMPORTS_PER_SOL),
+      p50,
       p99,
+      tier: jitoTier,
     };
   }
 
@@ -76,12 +87,12 @@ export class TradeExecutionService {
     return new PublicKey(JITO_TIP_ACCOUNTS[idx]);
   }
 
-  async execute({ connection, tx, keypair, tradeSizeSol = 0.1, useJito = true }) {
+  async execute({ connection, tx, keypair, tradeSizeSol = 0.1, useJito = true, jitoTier = 'fast' }) {
     const t0 = Date.now();
 
     if (useJito) {
       try {
-        const { tipSol, tipLamports } = await this.calculateDynamicTip(tradeSizeSol);
+        const { tipSol, tipLamports } = await this.calculateDynamicTip(tradeSizeSol, jitoTier);
         const tipAccount = this.getRandomTipAccount();
 
         const latestBlockhash = await connection.getLatestBlockhash('confirmed');

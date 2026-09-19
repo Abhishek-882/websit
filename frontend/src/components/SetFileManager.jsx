@@ -138,6 +138,7 @@ export default function SetFileManager() {
         orderType: currentFile.orderType || 'market',
         limitDipPct: Number(currentFile.limitDipPct || 20),
         maxPositions: Number(currentFile.maxPositions || 5),
+        feeSpeed: currentFile.feeSpeed || 'fast',
       },
       buyFilters: {
         mcapMin: Number(currentFile.buyFilters?.mcapMin || 0),
@@ -193,6 +194,7 @@ export default function SetFileManager() {
       limitDipPct: 20,
       maxPositions: 5,
       useJito: true,
+      feeSpeed: 'fast',
       buyFilters: {
         mcapMin: 10000,
         mcapMax: 250000,
@@ -265,6 +267,37 @@ export default function SetFileManager() {
             )}
           </div>
           
+          {/* Transaction Speed / Fee Tier Selector */}
+          <div className="pt-2">
+            <label className="text-[11px] text-slate-400 block mb-1.5">Transaction Speed</label>
+            <div className="flex gap-1.5">
+              {[
+                { value: 'slow', label: 'Slow', desc: '~0.000005 SOL', color: 'slate' },
+                { value: 'medium', label: 'Medium', desc: '~0.0005 SOL', color: 'yellow' },
+                { value: 'fast', label: 'Fast', desc: '~0.001 SOL', color: 'cyan' },
+              ].map(tier => {
+                const isSelected = (currentFile.feeSpeed || 'fast') === tier.value;
+                const baseClass = 'flex-1 py-1.5 px-2 rounded text-center cursor-pointer border transition-all text-[11px]';
+                const activeClass = isSelected
+                  ? (tier.value === 'slow' ? 'bg-slate-700/50 border-slate-500 text-white'
+                    : tier.value === 'medium' ? 'bg-yellow-900/30 border-yellow-600 text-yellow-300'
+                    : 'bg-cyan-900/30 border-cyan-600 text-cyan-300')
+                  : 'bg-slate-900 border-slate-700 text-slate-500 hover:border-slate-600';
+                return (
+                  <button
+                    key={tier.value}
+                    type="button"
+                    className={`${baseClass} ${activeClass}`}
+                    onClick={() => setCurrentFile({...currentFile, feeSpeed: tier.value})}
+                  >
+                    <div className="font-semibold">{tier.label}</div>
+                    <div className="text-[9px] opacity-75">{tier.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[9px] text-slate-500 mt-1">Slow: no Jito (cheapest) | Medium: Jito p50 tip | Fast: Jito p99 tip (highest priority)</p>
+          </div>
           <div className="pt-2 border-t border-slate-800">
             <label className="text-xs font-bold text-cyan-300">Autonomous Buy Criteria (Set File Filters)</label>
             <p className="text-[10px] text-slate-400 mb-2">Changing filters on the home page will NOT affect this bot once loaded.</p>

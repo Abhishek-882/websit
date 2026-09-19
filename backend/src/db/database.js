@@ -194,6 +194,7 @@ export async function saveSessionWallet({ userWallet, sessionPubkey, encryptedPr
     is_active: true,
     bot_config: botConfig || {},
     created_at: existingIdx >= 0 ? localDb.session_wallets[existingIdx].created_at : now.toISOString(),
+    session_started_at: existingIdx >= 0 ? (localDb.session_wallets[existingIdx].session_started_at || now.toISOString()) : now.toISOString(),
     updated_at: now.toISOString(),
     expires_at: expiresAt,
   };

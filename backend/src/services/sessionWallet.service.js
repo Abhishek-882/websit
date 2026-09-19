@@ -96,6 +96,7 @@ export class SessionWalletService {
       balanceSol: balance,
       isActive: session.is_active,
       createdAt: session.created_at,
+      sessionStartedAt: session.session_started_at || session.created_at,
     };
   }
 

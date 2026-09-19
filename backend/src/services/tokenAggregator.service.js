@@ -3,6 +3,7 @@ import { gmgnKeyPool } from './gmgnKeyPool.service.js';
 import { devFundService } from './devFund.service.js';
 import { getAllActiveSessions, createLimitOrder, getPendingLimitOrders, hasPendingLimitOrder, fillLimitOrder, getActiveSetFile, isBoughtRecently, addBoughtToken, getTrades } from '../db/database.js';
 import { tradingService } from './trading.service.js';
+import { jupiterPriceService } from './jupiterPrice.service.js';
 
 export class TokenAggregatorService {
   constructor() {
@@ -13,6 +14,7 @@ export class TokenAggregatorService {
     this.scanIntervalMs = 60 * 1000; // 60 seconds automated background cycle
     this.timer = null;
     this.fastTickerTimer = null;
+    this.positionMonitorTimer = null; // 1.5s TP/SL/Limit order monitor
     this.cacheTtlMs = 10 * 60 * 1000; // 10 minutes cache TTL
     this.maxGmgnEnrichmentsPerCycle = 8; // Safely paced throughput across 5 keys
     this.solPriceUsd = 145; // Live SOL price in USD
@@ -20,7 +22,7 @@ export class TokenAggregatorService {
 
   startAutoScan() {
     if (this.timer) return;
-    console.log(`[Token Aggregator] 🚀 Autonomous Solana meme coin auto-scan initialized.`);
+    console.log(`[Token Aggregator] Autonomous Solana meme coin auto-scan initialized.`);
     
     // 1. Run initial scan after 1.5s startup delay
     setTimeout(() => {
@@ -34,6 +36,12 @@ export class TokenAggregatorService {
 
     // 3. Start sustainable 12s GMGN market cap & price fast ticker
     this.startFastTicker();
+
+    // 4. Start Jupiter Price V3 real-time monitor (1.5s polling for held positions)
+    jupiterPriceService.start().catch(err => console.warn('[Token Aggregator] Jupiter price start notice:', err.message));
+
+    // 5. Start 1.5s position monitor loop (TP/SL/Limit orders — independent of GMGN ticker)
+    this.startPositionMonitor();
   }
 
   startFastTicker() {
@@ -132,6 +140,83 @@ export class TokenAggregatorService {
     if (this.fastTickerTimer) {
       clearInterval(this.fastTickerTimer);
       this.fastTickerTimer = null;
+    }
+    if (this.positionMonitorTimer) {
+      clearInterval(this.positionMonitorTimer);
+      this.positionMonitorTimer = null;
+    }
+    jupiterPriceService.stop();
+  }
+
+  /**
+   * 1.5s Position Monitor — dedicated high-frequency loop for TP/SL and Limit Orders.
+   * Runs independently from the 12s GMGN ticker.
+   * Uses Jupiter Price V3 as primary price source (1.5s freshness).
+   */
+  startPositionMonitor() {
+    if (this.positionMonitorTimer) return;
+    console.log('[Token Aggregator] 1.5s position monitor active (TP/SL/Limit orders).');
+
+    this.positionMonitorTimer = setInterval(async () => {
+      try {
+        // Check limit orders using Jupiter prices with tokensMap fallback
+        await this.checkPendingLimitOrdersFast();
+        // Check TP/SL positions using Jupiter prices with tokensMap fallback
+        await tradingService.checkPositionsAgainstStrategy(this.tokensMap);
+      } catch (err) {
+        // Position monitor error caught cleanly
+      }
+    }, 1500);
+  }
+
+  /**
+   * Fast limit order check using Jupiter V3 prices as primary source.
+   */
+  async checkPendingLimitOrdersFast() {
+    try {
+      const pendingOrders = await getPendingLimitOrders();
+      if (!Array.isArray(pendingOrders) || pendingOrders.length === 0) return;
+
+      for (const order of pendingOrders) {
+        // Priority 1: Jupiter V3 real-time price
+        let livePrice = 0;
+        const jupPrice = jupiterPriceService.getPrice(order.tokenAddress);
+        if (jupPrice && !jupPrice.isStale && jupPrice.usdPrice > 0) {
+          livePrice = jupPrice.usdPrice;
+        } else {
+          // Priority 2: tokensMap fallback
+          const token = this.tokensMap.get(order.tokenAddress);
+          if (token && token.priceUsd > 0) {
+            livePrice = token.priceUsd;
+          }
+        }
+
+        if (livePrice <= 0) continue;
+
+        // Ensure Jupiter is tracking this token for future ticks
+        jupiterPriceService.subscribeMints([order.tokenAddress]);
+
+        if (livePrice <= order.targetPriceUsd) {
+          console.log(`[BOT] Fibonacci Retracement Hit for $${order.coinSymbol}! Target: $${order.targetPriceUsd.toFixed(6)}, Live: $${livePrice.toFixed(6)}. Executing Limit Buy!`);
+          try {
+            await tradingService.autoBuy({
+              userWallet: order.userWallet,
+              tokenAddress: order.tokenAddress,
+              coinName: order.coinName,
+              coinSymbol: order.coinSymbol,
+              amountSol: order.amountSol,
+              slippageBps: order.slippageBps,
+              useJito: order.useJito,
+              feeSpeed: order.feeSpeed || 'fast',
+            });
+            await fillLimitOrder(order.id, { filled_price_usd: livePrice });
+          } catch (buyErr) {
+            console.warn(`[BOT] Limit order execution notice for $${order.coinSymbol}:`, buyErr.message);
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore
     }
   }
 
@@ -435,6 +520,7 @@ export class TokenAggregatorService {
         const useJito = tradeCfg.useJito ?? true;
         const orderType = tradeCfg.orderType || 'market';
         const limitDipPct = Math.abs(Number(tradeCfg.limitDipPct || 20));
+        const feeSpeed = tradeCfg.feeSpeed || activeSetFile.feeSpeed || 'fast';
 
         // Normalized re-entry cooldown (default 7 days)
         const reentryEnabled = activeSetFile.reentryRule ? activeSetFile.reentryRule.enabled !== false : (activeSetFile.reentry ? (activeSetFile.reentry.enabled ?? true) : true);
@@ -507,6 +593,17 @@ export class TokenAggregatorService {
           continue;
         }
 
+        // ── TIMING GUARD ───────────────────────────────────────────────────
+        // Skip tokens that existed BEFORE this bot session was activated.
+        // Only buy tokens created AFTER the session started (countdown from "now").
+        if (session.session_started_at) {
+          const sessionStartMs = new Date(session.session_started_at).getTime();
+          if (token.pairCreatedAt && token.pairCreatedAt < sessionStartMs) {
+            continue; // Token existed before bot session started — skip
+          }
+        }
+        // ── END TIMING GUARD ───────────────────────────────────────────────
+
         // Dev checks
         if (filters.devMustBeCex && !token.devFund?.isCexFunded) continue;
         if (filters.devMustHold && (token.devFund?.devStatus !== 'Holding' || token.devFund?.isDumped)) continue;
@@ -548,6 +645,10 @@ export class TokenAggregatorService {
               amountSol: Number(part1.amountSol || buyAmount),
               slippageBps,
               useJito,
+              feeSpeed: tradeCfg.feeSpeed || 'fast',
+            }).then(() => {
+              // Subscribe to Jupiter price monitor for real-time TP/SL tracking
+              jupiterPriceService.subscribeMints([token.address]);
             }).catch(err => {
               console.warn(`[BOT] DCA Part 1 execution notice for $${token.symbol}:`, err.message);
             });
@@ -571,6 +672,7 @@ export class TokenAggregatorService {
               amountSol: Number(part.amountSol || buyAmount),
               slippageBps,
               useJito,
+              feeSpeed: tradeCfg.feeSpeed || 'fast',
               strategyRules: tradeCfg.strategyRules || [],
               closingType: tradeCfg.closingType || 'amount',
               isDca: true,
@@ -594,6 +696,7 @@ export class TokenAggregatorService {
               amountSol: buyAmount,
               slippageBps,
               useJito,
+              feeSpeed: tradeCfg.feeSpeed || 'fast',
               strategyRules: tradeCfg.strategyRules || [],
               closingType: tradeCfg.closingType || 'amount',
             });
@@ -608,6 +711,10 @@ export class TokenAggregatorService {
               amountSol: buyAmount,
               slippageBps,
               useJito,
+              feeSpeed: tradeCfg.feeSpeed || 'fast',
+            }).then(() => {
+              // Subscribe to Jupiter price monitor for real-time TP/SL tracking
+              jupiterPriceService.subscribeMints([token.address]);
             }).catch(err => {
               console.warn(`[BOT] Auto-buy execution notice for $${token.symbol}:`, err.message);
             });

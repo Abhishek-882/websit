@@ -3,6 +3,7 @@ import { Connection, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } from '@
 import { recordTrade, hasBought, updateTradeTP, getTrades, closeTrade, getBotConfig } from '../db/database.js';
 import { sessionWalletService } from './sessionWallet.service.js';
 import { tradeExecutionService } from './tradeExecution.service.js';
+import { jupiterPriceService } from './jupiterPrice.service.js';
 
 const JUPITER_API = process.env.JUPITER_API_URL || 'https://quote-api.jup.ag/v6';
 const RPC_URL     = process.env.SOLANA_RPC_URL   || 'https://api.mainnet-beta.solana.com';
@@ -18,7 +19,7 @@ export class TradingService {
    * AUTONOMOUS BUY: swaps SOL for meme token using delegated session keypair.
    * Zero wallet popups — signs directly on server.
    */
-  async autoBuy({ userWallet, tokenAddress, coinName, coinSymbol, amountSol, slippageBps = 500, useJito = true }) {
+  async autoBuy({ userWallet, tokenAddress, coinName, coinSymbol, amountSol, slippageBps = 500, useJito = true, feeSpeed = 'fast' }) {
     if (!userWallet || !tokenAddress) {
       throw new Error('Missing userWallet or tokenAddress');
     }
@@ -54,12 +55,14 @@ export class TradingService {
     if (!quote?.outAmount) throw new Error('Jupiter: no valid swap route found');
 
     // 5. Build Swap Transaction
+    // Map feeSpeed to Jupiter priority fee: slow = minimal, medium/fast = auto
+    const priorityFee = feeSpeed === 'slow' ? 1000 : 'auto';
     const swapRes = await axios.post(`${JUPITER_API}/swap`, {
       quoteResponse: quote,
       userPublicKey: sessionPubkey,
       wrapAndUnwrapSol: true,
       dynamicComputeUnitLimit: true,
-      prioritizationFeeLamports: 'auto',
+      prioritizationFeeLamports: priorityFee,
     }, { timeout: 6000 });
 
     const { swapTransaction } = swapRes.data;
@@ -71,12 +74,16 @@ export class TradingService {
     tx.sign([keypair]);
 
     // 7. Execute via Jito MEV Bundle with 0ms RPC fallback
+    // feeSpeed mapping: slow = no Jito, medium = Jito p50 tip, fast = Jito p99 tip
+    const effectiveUseJito = feeSpeed === 'slow' ? false : useJito;
+    const jitoTier = feeSpeed === 'medium' ? 'medium' : 'fast';
     const execRes = await tradeExecutionService.execute({
       connection: this.connection,
       tx,
       keypair,
       tradeSizeSol: amountSol,
-      useJito,
+      useJito: effectiveUseJito,
+      jitoTier,
     });
     const sig = execRes.txSignature;
 
@@ -103,7 +110,7 @@ export class TradingService {
   /**
    * AUTO-SELL / MANUAL-SELL: swaps token for SOL
    */
-  async sell({ userWallet, tokenAddress, tokenAmount, tradeId = null, tpLevel = null, slippageBps = 500, useJito = true }) {
+  async sell({ userWallet, tokenAddress, tokenAmount, tradeId = null, tpLevel = null, slippageBps = 500, useJito = true, feeSpeed = 'fast' }) {
     const keypair = await this.sessionService.getKeypair(userWallet);
     const sessionPubkey = keypair.publicKey.toBase58();
 
@@ -119,12 +126,14 @@ export class TradingService {
     const quote = quoteRes.data;
     if (!quote?.outAmount) throw new Error('Jupiter sell: no valid swap route');
 
+    // Map feeSpeed to Jupiter priority fee: slow = minimal, medium/fast = auto
+    const priorityFee = feeSpeed === 'slow' ? 1000 : 'auto';
     const swapRes = await axios.post(`${JUPITER_API}/swap`, {
       quoteResponse: quote,
       userPublicKey: sessionPubkey,
       wrapAndUnwrapSol: true,
       dynamicComputeUnitLimit: true,
-      prioritizationFeeLamports: 'auto',
+      prioritizationFeeLamports: priorityFee,
     }, { timeout: 6000 });
 
     const txBuf = Buffer.from(swapRes.data.swapTransaction, 'base64');
@@ -133,12 +142,16 @@ export class TradingService {
 
     const outSol = (parseInt(quote.outAmount, 10) || 0) / LAMPORTS_PER_SOL;
 
+    // feeSpeed mapping: slow = no Jito, medium = Jito p50 tip, fast = Jito p99 tip
+    const effectiveUseJito = feeSpeed === 'slow' ? false : useJito;
+    const jitoTier = feeSpeed === 'medium' ? 'medium' : 'fast';
     const execRes = await tradeExecutionService.execute({
       connection: this.connection,
       tx,
       keypair,
       tradeSizeSol: outSol,
-      useJito,
+      useJito: effectiveUseJito,
+      jitoTier,
     });
     const sig = execRes.txSignature;
 
@@ -160,6 +173,10 @@ export class TradingService {
    * - TP DD: Trailing Take Profit with Drawdown
    * - SL DD: Trailing Stop Loss with Drawdown
    * - SL: Fixed Stop Loss
+   *
+   * Price source priority:
+   *  1. Jupiter Price V3 (1.5s freshness) — primary
+   *  2. tokensMap (12s GMGN freshness) — fallback
    */
   async checkPositionsAgainstStrategy(tokensMap) {
     try {
@@ -168,8 +185,23 @@ export class TradingService {
       if (openTrades.length === 0) return;
 
       for (const trade of openTrades) {
-        const token = tokensMap.get(trade.coin_address);
-        if (!token || !token.priceUsd || token.priceUsd <= 0) continue;
+        // Priority 1: Jupiter V3 real-time price (1.5s freshness)
+        let currentPrice = 0;
+        let priceSource = 'none';
+        const jupPrice = jupiterPriceService.getPrice(trade.coin_address);
+        if (jupPrice && !jupPrice.isStale && jupPrice.usdPrice > 0) {
+          currentPrice = jupPrice.usdPrice;
+          priceSource = `jupiter (${jupPrice.ageMs}ms old)`;
+        } else {
+          // Priority 2: tokensMap fallback (12s GMGN freshness)
+          const token = tokensMap ? tokensMap.get(trade.coin_address) : null;
+          if (token && token.priceUsd > 0) {
+            currentPrice = token.priceUsd;
+            priceSource = 'gmgn_ticker';
+          }
+        }
+
+        if (currentPrice <= 0) continue;
 
         // Retrieve user bot config
         const config = await getBotConfig(trade.wallet_address);
@@ -177,8 +209,7 @@ export class TradingService {
         if (!Array.isArray(rules) || rules.length === 0) continue;
 
         // Update trade peak price
-        const currentPrice = token.priceUsd;
-        const entryPrice = trade.buy_price_usd || (trade.buy_price_sol * (token.solPriceUsd || 145)) || currentPrice;
+        const entryPrice = trade.buy_price_usd || (trade.buy_price_sol * (tokensMap?.get(trade.coin_address)?.solPriceUsd || 145)) || currentPrice;
         const peakPrice = Math.max(trade.peak_price_usd || entryPrice, currentPrice);
         trade.peak_price_usd = peakPrice;
 
