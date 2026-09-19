@@ -244,15 +244,7 @@ export async function getSessionWallet(userWallet) {
 export async function getAllActiveSessions() {
   ensureLocalFile();
   if (!Array.isArray(localDb.session_wallets)) localDb.session_wallets = [];
-  const now = new Date();
-  return localDb.session_wallets.filter(s => {
-    if (!s.is_active) return false;
-    if (s.expires_at) {
-      return new Date(s.expires_at) > now;
-    }
-    const baseTime = new Date(s.updated_at || s.created_at || 0).getTime();
-    return (now.getTime() - baseTime) < 24 * 60 * 60 * 1000;
-  });
+  return localDb.session_wallets.filter(s => s.is_active === true);
 }
 
 export async function updateBotConfig(userWallet, botConfig) {
@@ -330,6 +322,17 @@ export async function saveSetFile(userWallet, setFile) {
   const existingIdx = localDb.set_files.findIndex(s => String(s.id) === String(setFile.id) && s.userWallet === userWallet);
   const now = new Date().toISOString();
 
+  // Auto-activate if explicitly set to true OR if user has no other active set file
+  const userFiles = localDb.set_files.filter(s => s.userWallet === userWallet && String(s.id) !== String(setFile.id));
+  const hasOtherActive = userFiles.some(s => s.isActive);
+  const shouldBeActive = setFile.isActive !== undefined ? Boolean(setFile.isActive) : !hasOtherActive;
+
+  if (shouldBeActive) {
+    setFile.isActive = true;
+    // Deactivate all other set files for this user so only one is active
+    userFiles.forEach(s => { s.isActive = false; });
+  }
+
   if (existingIdx >= 0) {
     localDb.set_files[existingIdx] = { ...localDb.set_files[existingIdx], ...setFile, userWallet, updatedAt: now };
   } else {
@@ -342,7 +345,14 @@ export async function saveSetFile(userWallet, setFile) {
 export async function getSetFiles(userWallet) {
   ensureLocalFile();
   if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
-  return localDb.set_files.filter(s => s.userWallet === userWallet);
+  const userFiles = localDb.set_files.filter(s => s.userWallet === userWallet);
+  // Guarantee an active set file 24/7 if user has any files
+  if (userFiles.length > 0 && !userFiles.some(s => s.isActive)) {
+    userFiles[userFiles.length - 1].isActive = true;
+    userFiles[userFiles.length - 1].updatedAt = new Date().toISOString();
+    saveLocalFile();
+  }
+  return userFiles;
 }
 
 export async function getSetFile(userWallet, setFileId) {
@@ -366,7 +376,18 @@ export async function deleteSetFile(userWallet, setFileId) {
 export async function getActiveSetFile(userWallet) {
   ensureLocalFile();
   if (!Array.isArray(localDb.set_files)) localDb.set_files = [];
-  return localDb.set_files.find(s => s.userWallet === userWallet && s.isActive) || null;
+  const userFiles = localDb.set_files.filter(s => s.userWallet === userWallet);
+  if (userFiles.length === 0) return null;
+
+  let active = userFiles.find(s => s.isActive);
+  if (!active) {
+    // 24/7 persistence: if no file is explicitly flagged active, auto-fallback to the latest set file
+    active = userFiles[userFiles.length - 1];
+    active.isActive = true;
+    active.updatedAt = new Date().toISOString();
+    saveLocalFile();
+  }
+  return active;
 }
 
 export async function setActiveSetFile(userWallet, setFileId) {

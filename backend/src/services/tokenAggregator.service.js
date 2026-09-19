@@ -408,8 +408,22 @@ export class TokenAggregatorService {
       if (!Array.isArray(activeSessions) || activeSessions.length === 0) return;
 
       for (const session of activeSessions) {
-        // Load active set file from DB (not session.bot_config)
-        const activeSetFile = await getActiveSetFile(session.user_wallet);
+        // Load active set file from DB (with fallback to session.bot_config if needed)
+        let activeSetFile = await getActiveSetFile(session.user_wallet);
+        if (!activeSetFile && session.bot_config && Object.keys(session.bot_config).length > 0) {
+          activeSetFile = {
+            id: 'default_session_profile',
+            name: 'Session Profile',
+            isActive: true,
+            tradeSizeSol: session.bot_config.tradeAmountSol || 0.1,
+            slippageBps: session.bot_config.slippageBps || 500,
+            buyFilters: session.bot_config.filters || {},
+            tradeConfig: {
+              buyAmountSol: session.bot_config.tradeAmountSol || 0.1,
+              slippageBps: session.bot_config.slippageBps || 500,
+            }
+          };
+        }
         if (!activeSetFile) continue;
 
         const filters = activeSetFile.buyFilters || {};

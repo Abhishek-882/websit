@@ -2,7 +2,7 @@ import { Keypair, Connection, PublicKey, Transaction,
          SystemProgram, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import crypto from 'crypto';
-import { saveSessionWallet, getSessionWallet, deactivateSession, archiveSessionWallet, getArchivedSessions } from '../db/database.js';
+import { saveSessionWallet, getSessionWallet, deactivateSession, archiveSessionWallet, getArchivedSessions, getActiveSetFile, getSetFiles, setActiveSetFile } from '../db/database.js';
 
 const ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_SECRET || 'MEME_CAT_32_CHAR_SECRET_KEY!99';
 const RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
@@ -26,6 +26,15 @@ export class SessionWalletService {
    * Create or retrieve a session wallet for a user.
    */
   async createSession(userWallet, botConfig = {}) {
+    // Ensure user has an active set file bound to the session
+    const activeSet = await getActiveSetFile(userWallet);
+    if (!activeSet) {
+      const userFiles = await getSetFiles(userWallet);
+      if (userFiles && userFiles.length > 0) {
+        await setActiveSetFile(userWallet, userFiles[userFiles.length - 1].id);
+      }
+    }
+
     const existing = await getSessionWallet(userWallet);
     if (existing) {
       return { sessionPubkey: existing.session_pubkey };

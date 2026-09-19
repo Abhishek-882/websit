@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useBotStore } from '../stores/botStore';
 import { botApi } from '../api/botClient';
 import { IconBot, IconCheck, IconTrash, IconClose } from './Icons';
@@ -13,6 +13,40 @@ export default function SetFileManager() {
   const [isEditing, setIsEditing] = useState(false);
   const [currentFile, setCurrentFile] = useState(null);
   const [nameError, setNameError] = useState(null);
+
+  // Sync set files from backend or auto-heal from localStorage on mount/wallet change
+  useEffect(() => {
+    if (!connectedWallet) return;
+    botApi.getSetFiles(connectedWallet).then(res => {
+      const serverFiles = res?.setFiles || [];
+      if (serverFiles.length > 0) {
+        setSetFiles(serverFiles);
+        const active = serverFiles.find(f => f.isActive) || serverFiles[serverFiles.length - 1];
+        if (active) {
+          setActiveSetFile(active);
+        }
+      } else if (setFiles && setFiles.length > 0) {
+        // Self-healing: Local storage has files, but server doesn't (e.g. server restart)
+        // Auto-sync local files to server so it continues running 24/7!
+        Promise.all(setFiles.map(f => botApi.saveSetFile(connectedWallet, f))).then(() => {
+          const active = activeSetFile || setFiles[0];
+          if (active?.id) {
+            botApi.activateSetFile(connectedWallet, active.id).then(() => {
+              botApi.getSetFiles(connectedWallet).then(r => {
+                if (r?.setFiles) {
+                  setSetFiles(r.setFiles);
+                  const act = r.setFiles.find(f => f.isActive) || r.setFiles[0];
+                  if (act) setActiveSetFile(act);
+                }
+              });
+            });
+          }
+        });
+      }
+    }).catch(err => {
+      console.warn('Failed to load set files:', err.message);
+    });
+  }, [connectedWallet]);
 
   const handleActivate = async (file) => {
     if (!connectedWallet || !file) return;
@@ -54,8 +88,15 @@ export default function SetFileManager() {
     try {
       await botApi.deleteSetFile(connectedWallet, fileId);
       const res = await botApi.getSetFiles(connectedWallet);
-      setSetFiles(res.setFiles || []);
-      if (activeSetFile?.id === fileId) setActiveSetFile(null);
+      const remaining = res.setFiles || [];
+      setSetFiles(remaining);
+      if (activeSetFile?.id === fileId) {
+        const nextActive = remaining.find(f => f.isActive) || (remaining.length > 0 ? remaining[0] : null);
+        setActiveSetFile(nextActive);
+        if (nextActive?.id) {
+          await botApi.activateSetFile(connectedWallet, nextActive.id);
+        }
+      }
     } catch (err) {
       alert(err.message);
     }
@@ -77,10 +118,13 @@ export default function SetFileManager() {
     setNameError(null);
 
     const fileId = currentFile.id || `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const shouldBeActive = currentFile.isActive !== undefined ? currentFile.isActive : (setFiles.length === 0 || !activeSetFile);
+
     const payload = {
       ...currentFile,
       id: fileId,
       name: currentFile.name.trim(),
+      isActive: shouldBeActive,
       tradeSizeSol: Number(currentFile.tradeSizeSol || 0.1),
       slippageBps: Number(currentFile.slippageBps || 500),
       orderType: currentFile.orderType || 'market',
@@ -126,7 +170,10 @@ export default function SetFileManager() {
     try {
       await botApi.saveSetFile(connectedWallet, payload);
       const res = await botApi.getSetFiles(connectedWallet);
-      setSetFiles(res.setFiles || []);
+      const updatedFiles = res.setFiles || [];
+      setSetFiles(updatedFiles);
+      const active = updatedFiles.find(f => f.isActive) || updatedFiles[updatedFiles.length - 1];
+      if (active) setActiveSetFile(active);
       setIsEditing(false);
       setCurrentFile(null);
     } catch (err) {
@@ -139,6 +186,7 @@ export default function SetFileManager() {
     setCurrentFile({
       id: `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       name: 'New Profile',
+      isActive: setFiles.length === 0,
       tradeSizeSol: 0.1,
       slippageBps: 500,
       orderType: 'market',

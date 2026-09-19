@@ -3,6 +3,7 @@ import { GMGNKeyPool } from '../src/services/gmgnKeyPool.service.js';
 import { DevFundService } from '../src/services/devFund.service.js';
 import { tokenAggregatorService } from '../src/services/tokenAggregator.service.js';
 import { isTokenMatchingFilters } from '../../frontend/src/engine/filterEngine.js';
+import { saveSetFile, getSetFiles, getActiveSetFile, setActiveSetFile, getAllActiveSessions, saveSessionWallet } from '../src/db/database.js';
 
 console.log('════════════════════════════════════════════════════════════════════════════');
 console.log('🚀 RUNNING COMPREHENSIVE 1,000+ LOOPED FULL TESTS (TELEMETRY & STRESS SUITE)');
@@ -426,6 +427,54 @@ for (let i = 0; i < 100; i++) {
   reportAssertion(result === isCooldownActive, `Cooldown check mismatch at i=${i}, bought ${boughtDaysAgo} days ago`);
 }
 console.log(`  ✓ Loop 9 Passed: 100 iterations completed (${100} assertions).\n`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOOP 10: 24/7 Set File Persistence, Auto-Activation & Fallback (100 Iterations)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('▶ [LOOP 10/10] 24/7 Set File Persistence, Auto-Activation & Fallback (100 iterations)...');
+for (let i = 0; i < 100; i++) {
+  const testWallet = `TestWallet_${i}_${Date.now()}`;
+  
+  // 10a: First saveSetFile must auto-activate
+  const file1 = await saveSetFile(testWallet, {
+    name: `Profile_1_${i}`,
+    tradeSizeSol: 0.1 + (i * 0.01),
+    slippageBps: 500,
+  });
+  reportAssertion(file1.isActive === true, `First set file must auto-activate at i=${i}`);
+  
+  // 10b: getActiveSetFile returns file1
+  const active1 = await getActiveSetFile(testWallet);
+  reportAssertion(active1 && active1.id === file1.id, `Active set file must match file1 at i=${i}`);
+  reportAssertion(active1.isActive === true, `active1.isActive must be true at i=${i}`);
+  
+  // 10c: Saving a second file explicitly active deactivates the first
+  const file2 = await saveSetFile(testWallet, {
+    name: `Profile_2_${i}`,
+    isActive: true,
+    tradeSizeSol: 0.2,
+  });
+  reportAssertion(file2.isActive === true, `file2 must be active at i=${i}`);
+  const active2 = await getActiveSetFile(testWallet);
+  reportAssertion(active2 && active2.id === file2.id, `Active set file must now be file2 at i=${i}`);
+  
+  // 10d: getSetFiles returns both and ensures exactly one is active
+  const allFiles = await getSetFiles(testWallet);
+  reportAssertion(allFiles.length === 2, `Must have exactly 2 set files at i=${i}`);
+  const activeCount = allFiles.filter(f => f.isActive).length;
+  reportAssertion(activeCount === 1, `Exactly 1 set file must be active at i=${i}`);
+
+  // 10e: 24/7 active sessions must remain active
+  const session = await saveSessionWallet({
+    userWallet: testWallet,
+    sessionPubkey: `SessionPubkey_${i}`,
+    encryptedPrivkey: 'dummy_enc',
+  });
+  const allActive = await getAllActiveSessions();
+  const sessionFound = allActive.some(s => s.user_wallet === testWallet && s.is_active);
+  reportAssertion(sessionFound, `Session must remain active 24/7 in background at i=${i}`);
+}
+console.log(`  ✓ Loop 10 Passed: 100 iterations completed (${100 * 7} assertions).\n`);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Summary
