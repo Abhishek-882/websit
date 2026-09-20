@@ -93,6 +93,7 @@ export const useBotStore = create(
       partialize: (s) => ({
         botConfig: s.botConfig,
         sessionPubkey: s.sessionPubkey,
+        sessionBalanceSol: s.sessionBalanceSol,
         setFiles: s.setFiles,
         activeSetFile: s.activeSetFile,
         activeSetFileName: s.activeSetFileName,

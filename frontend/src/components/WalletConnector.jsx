@@ -61,21 +61,31 @@ export default function WalletConnector() {
         // Session
         if (sessionRes.status === 'fulfilled') {
           const res = sessionRes.value;
-          setSessionPubkey(res.sessionPubkey || null);
-          setSessionBalance(res.balanceSol || 0);
-          if (res.botConfig) setBotConfig(res.botConfig);
+          if (res.sessionPubkey) {
+            // Session found for this specific wallet address
+            setSessionPubkey(res.sessionPubkey);
+            setSessionBalance(res.balanceSol || 0);
+            if (res.botConfig) setBotConfig(res.botConfig);
+          } else {
+            // Wallet-specific query returned null — fall back to email-based session
+            botApi.getSession('current').then(emailRes => {
+              if (emailRes?.sessionPubkey) {
+                setSessionPubkey(emailRes.sessionPubkey);
+                setSessionBalance(emailRes.balanceSol || 0);
+                if (emailRes.botConfig) setBotConfig(emailRes.botConfig);
+              }
+              // If email-based also returns null, keep whatever is in store (don't wipe)
+            }).catch(() => {});
+          }
         } else {
-          // If query by wallet failed, try query by authenticated email session
+          // Network error — fall back to email-based session
           botApi.getSession('current').then(res => {
             if (res?.sessionPubkey) {
               setSessionPubkey(res.sessionPubkey);
               setSessionBalance(res.balanceSol || 0);
               if (res.botConfig) setBotConfig(res.botConfig);
             }
-          }).catch(() => {
-            setSessionPubkey(null);
-            setSessionBalance(0);
-          });
+          }).catch(() => {});
         }
         // Trades
         if (tradesRes.status === 'fulfilled') {
@@ -185,7 +195,15 @@ export default function WalletConnector() {
 
   if (!connected) {
     return (
-      <>
+      <div className="flex items-center gap-2">
+        {/* Session wallet indicator — always visible, even without Phantom connected */}
+        {sessionPubkey && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-700/70 text-emerald-300 text-xs font-mono font-bold shadow-sm">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Bot: {sessionBalance.toFixed(3)} SOL</span>
+          </div>
+        )}
+
         <button
           onClick={handleConnectClick}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md active:scale-95 transition-all"
@@ -259,7 +277,7 @@ export default function WalletConnector() {
             </div>
           </div>
         )}
-      </>
+      </div>
     );
   }
 
@@ -267,7 +285,7 @@ export default function WalletConnector() {
     <div className="flex items-center gap-2">
       {/* Session wallet indicator */}
       {sessionPubkey && (
-        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-700/70 text-emerald-300 text-xs font-mono font-bold shadow-sm">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-700/70 text-emerald-300 text-xs font-mono font-bold shadow-sm">
           <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
           <span>Bot: {sessionBalance.toFixed(3)} SOL</span>
         </div>
