@@ -71,6 +71,10 @@ export default function BotControlsModal({ isOpen, onClose }) {
   const [isImportingKey, setIsImportingKey] = useState(false);
   const [isReactivatingKey, setIsReactivatingKey] = useState(false);
 
+  // Delete & Reset Confirmation Modal state
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [isDeletingSession, setIsDeletingSession] = useState(false);
+
   // Backup Vault state
   const [backups, setBackups] = useState([]);
   const [isBackupsOpen, setIsBackupsOpen] = useState(false);
@@ -289,29 +293,30 @@ export default function BotControlsModal({ isOpen, onClose }) {
     }
   };
 
-  const handleDeleteSession = async () => {
-    if (!connectedWallet) {
-      alert('Please connect your Phantom or Solflare wallet first.');
-      return;
-    }
+  const handleDeleteSession = () => {
     if (!sessionPubkey) {
       alert('No active session wallet to delete.');
       return;
     }
+    setShowDeleteConfirmModal(true);
+  };
 
+  const confirmAndExecuteDelete = async () => {
+    const targetWallet = connectedWallet || 'current';
     const hasFunds = sessionBalance > 0.0001;
-    const msg = hasFunds
-      ? `Delete & Reset Session Wallet?\n\nAUTOMATIC REFUND GUARANTEE:\nThis session wallet currently holds ${sessionBalance.toFixed(4)} SOL.\n100% of remaining funds will be automatically swept back to your connected Phantom wallet before deletion.\n\nYour session private key will also be permanently archived in the Backup Vault for self-custody.\n\nProceed with safe deletion?`
-      : `Delete & Reset Session Wallet?\n\nYour session private key will be permanently archived in the Backup Vault so you can always export it later.\n\nYou can immediately create a brand new session wallet after resetting.\n\nProceed with reset?`;
 
-    if (!confirm(msg)) return;
+    if (hasFunds && !connectedWallet) {
+      alert('Please connect your Phantom or Solflare wallet first so your remaining SOL can be safely swept back to your personal wallet.');
+      return;
+    }
 
-    setLoading(true);
+    setIsDeletingSession(true);
     setStatusMsg(hasFunds ? 'Sweeping funds back to your Phantom wallet and archiving key...' : 'Archiving session and resetting...');
     try {
-      const res = await botApi.deleteSession(connectedWallet);
+      const res = await botApi.deleteSession(targetWallet);
       setSessionPubkey(null);
       setSessionBalance(0);
+      setShowDeleteConfirmModal(false);
       if (res.refundedSol > 0) {
         setStatusMsg(`Session deleted! Refunded ${res.refundedSol.toFixed(4)} SOL back to your connected wallet.`);
       } else {
@@ -323,7 +328,7 @@ export default function BotControlsModal({ isOpen, onClose }) {
       alert(`Session deletion failed: ${err.message}`);
       setStatusMsg(null);
     } finally {
-      setLoading(false);
+      setIsDeletingSession(false);
     }
   };
 
@@ -667,8 +672,8 @@ export default function BotControlsModal({ isOpen, onClose }) {
                     <button
                       type="button"
                       onClick={handleDeleteSession}
-                      disabled={loading || !connectedWallet}
-                      className="px-2.5 py-1 rounded bg-red-950/80 border border-red-800/80 hover:bg-red-900/80 text-red-300 text-xs font-semibold transition-all flex items-center gap-1 disabled:opacity-50"
+                      disabled={loading || isDeletingSession}
+                      className="px-2.5 py-1 rounded bg-red-950/80 border border-red-800/80 hover:bg-red-900/80 text-red-300 text-xs font-semibold transition-all flex items-center gap-1 disabled:opacity-50 active:scale-95"
                       title="Safely delete and reset session (automatically sweeps all funds and archives private key)"
                     >
                       <IconTrash className="w-3 h-3 text-red-400" />
@@ -991,6 +996,138 @@ export default function BotControlsModal({ isOpen, onClose }) {
                 >
                   <IconCheck className="w-3.5 h-3.5" />
                   <span>{isImportingKey ? 'Importing & Verifying...' : 'Import & Activate Session'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete & Reset Confirmation Modal */}
+        {showDeleteConfirmModal && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+            <div className="relative w-full max-w-md bg-[#0c101a] border border-rose-600/70 rounded-2xl shadow-2xl p-5 text-slate-100 space-y-4">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-rose-950/80 text-rose-400 border border-rose-800/80">
+                    <IconAlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-bold text-white leading-tight">
+                      Are you sure you want to Delete &amp; Reset?
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Confirm session wallet deactivation and reset
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirmModal(false)}
+                  disabled={isDeletingSession}
+                  className="p-1 text-slate-400 hover:text-white transition-colors"
+                >
+                  <IconClose className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Warning Notice */}
+              <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/60 text-xs text-rose-200 space-y-1.5">
+                <div className="flex items-start gap-2">
+                  <IconShield className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-rose-300">
+                      This will reset your active trading session.
+                    </p>
+                    <p className="text-[11px] text-slate-300 leading-relaxed mt-0.5">
+                      Autonomous 24/7 background scanning and buy orders will immediately halt for this wallet until a new session is created or imported.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Details & Refund Breakdown */}
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 text-[11px]">Session Address:</span>
+                  <span className="font-mono text-cyan-300 text-xs font-semibold">
+                    {sessionPubkey ? `${sessionPubkey.slice(0, 6)}...${sessionPubkey.slice(-6)}` : '--'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 text-[11px]">Current Balance:</span>
+                  <span className="font-mono text-emerald-400 font-bold text-xs">
+                    {sessionBalance.toFixed(4)} SOL
+                  </span>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                  {sessionBalance > 0.0001 ? (
+                    <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-800/60 text-emerald-200 text-[11px] space-y-1">
+                      <span className="font-bold flex items-center gap-1 text-emerald-300">
+                        <IconCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        Automatic 100% Refund Guarantee
+                      </span>
+                      <p className="text-slate-300 leading-relaxed">
+                        All <strong>{sessionBalance.toFixed(4)} SOL</strong> will be automatically swept back to your connected wallet {connectedWallet ? `(${connectedWallet.slice(0, 4)}...${connectedWallet.slice(-4)})` : ''} before the session is cleared.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="p-2 rounded-lg bg-slate-950/60 text-slate-400 text-[11px]">
+                      No funds remaining in this session wallet.
+                    </div>
+                  )}
+
+                  {sessionBalance > 0.0001 && !connectedWallet && (
+                    <div className="p-2.5 rounded-lg bg-amber-950/50 border border-amber-800/70 text-amber-200 text-[11px] space-y-1">
+                      <span className="font-bold text-amber-300 flex items-center gap-1">
+                        <IconAlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        Phantom Wallet Not Connected
+                      </span>
+                      <p className="text-slate-300 leading-relaxed">
+                        To receive the automatic refund of your {sessionBalance.toFixed(4)} SOL, please connect your Phantom wallet first, or export your private key via <strong>Backup Key</strong> before deleting.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex items-start gap-1.5 text-[11px] text-slate-400 pt-1">
+                    <IconKey className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Zero-Loss Archival:</strong> Your private key is permanently preserved in the Session Backup Vault so you can restore or export it anytime.
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirmModal(false)}
+                  disabled={isDeletingSession}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition-all border border-slate-700"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={confirmAndExecuteDelete}
+                  disabled={isDeletingSession || (sessionBalance > 0.0001 && !connectedWallet)}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-all shadow-lg shadow-rose-900/30 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-98"
+                >
+                  {isDeletingSession ? (
+                    <>
+                      <IconRefresh className="w-3.5 h-3.5 animate-spin" />
+                      <span>Sweeping &amp; Resetting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <IconTrash className="w-3.5 h-3.5" />
+                      <span>Yes, Delete &amp; Reset</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
